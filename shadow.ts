@@ -10,7 +10,9 @@ export interface ServiceShadowInit {
 /**
  * Use module augmentation to extend this interface.
  */
-export interface ServiceShadow {
+export interface CustomShadow {}
+
+export interface ServiceShadow extends Partial<CustomShadow> {
     id: string;
     name: string;
     init: ServiceShadowInit;

@@ -38,7 +38,6 @@ export abstract class ServiceRegistery {
 
     static register(service: ServiceCtr, eager = false): string {
         const shadow = getShadow(service, true);
-        if (!shadow.id) throw new Error("Service name cannot be empty");
         this.services.set(shadow.id, service);
         this.servicesReverse.set(service, shadow.id);
         this.serviceInstances.set(shadow.id, new service());
