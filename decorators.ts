@@ -1,22 +1,31 @@
 import { randomCode } from "utils/util";
 import { ServiceCtr, ServiceRegistery } from "./service-registery";
-import { ServiceShadowInit, updateShadow, getShadow, addParamData } from "./shadow";
+import { ServiceShadowInit, Shadow } from "./shadow";
 
 // TODO event decorators @On @Emit
 
+/**
+ * @class_decorator
+ */
 export function Service<S>(init: ServiceShadowInit = {}) {
     return function (service: ServiceCtr<S>) {
-        const shadow = updateShadow(service, (sys) => ({ ...sys, name: init.name || randomCode(10), init }));
+        const shadow = Shadow.update(service, (sys) => ({ ...sys, name: init.name || randomCode(10), init }));
         ServiceRegistery.register(service);
     };
 }
 
+/**
+ * @method_decorator
+ */
 export function Constructor<T = any>(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    updateShadow(target, (shadow) => {
+    Shadow.update(target, (shadow) => {
         shadow.constructors.add(propertyKey);
     });
 }
 
+/**
+ * @method_decorator
+ */
 export function Throws<E extends Error>(error: (err: unknown) => E) {
     return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
         const originalMethod = descriptor.value;
@@ -33,20 +42,29 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
     };
 }
 
+/**
+ * @property_decorator
+ */
 export function Use<S>(service: new () => S) {
     return function (target: any, propertyKey: string) {
-        updateShadow(target, (shadow) => {
+        Shadow.update(target, (shadow) => {
             shadow.deps[propertyKey] = service;
         });
     };
 }
 
+/**
+ * @method_decorator
+ */
 export function Init(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    updateShadow(target, (shadow) => {
+    Shadow.update(target, (shadow) => {
         shadow.initializers.add(propertyKey);
     });
 }
 
+/**
+ * @method_decorator
+ */
 export function Subscription(interval: number) {
     return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
         setInterval(() => {
@@ -57,9 +75,44 @@ export function Subscription(interval: number) {
 }
 
 /**
+ * @prop_decorator
+ */
+export function Seal(copy = false) {
+    const deepSeal = (obj: any) => {
+        Object.seal(obj);
+
+        if (obj === null || typeof obj !== "object") {
+            return obj;
+        }
+
+        for (const key in obj) {
+            if (typeof obj[key] === "object" && obj[key] !== null) {
+                deepSeal(obj[key]);
+            }
+        }
+
+        return obj;
+    };
+
+    return function (target: any, propertyKey: string) {
+        const value: string = target[propertyKey];
+
+        Object.defineProperty(target, propertyKey, {
+            value: deepSeal(copy ? structuredClone(value) : value),
+            enumerable: true,
+            configurable: false,
+            writable: false,
+        });
+    };
+}
+
+/**
  * Apply this to parameters to validate them before the function is called.
  *
  * Note that this **must** also be applied to the function itself to work!
+ *
+ * @method_decorator
+ * @param_decorator
  */
 export function Val<V>(validate?: (value: V) => V) {
     return function (
@@ -69,13 +122,13 @@ export function Val<V>(validate?: (value: V) => V) {
     ) {
         // If parameter: register parameter validation
         if (typeof paramIndexOrDecorator === "number") {
-            addParamData(target, propertyKey as string, paramIndexOrDecorator, { _val: validate });
+            Shadow.addParamData(target, propertyKey as string, paramIndexOrDecorator, { _val: validate });
         }
         // If function: validate args
         else {
             const originalMethod = paramIndexOrDecorator.value;
             paramIndexOrDecorator.value = function (...args: any[]) {
-                const shadow = getShadow(target, true);
+                const shadow = Shadow.get(target, true);
                 const params = [...args];
                 if (shadow.props[propertyKey as string] || validate) {
                     for (let i = 0; i < args.length; i++) {

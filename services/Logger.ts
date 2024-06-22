@@ -1,5 +1,5 @@
 import { Service } from "../decorators";
-import { getShadow } from "../shadow";
+import { Shadow } from "../shadow";
 
 type LogSeverity = "all" | "verbose" | "silent" | "important";
 
@@ -21,7 +21,7 @@ export class Logger {
         const labels = ["{{ NJSES }}"];
         // If first arg given is a service, add a service label and remove it from the messages
         if (messages[0]) {
-            const shadow = getShadow(messages[0]);
+            const shadow = Shadow.get(messages[0]);
             if (shadow) {
                 labels.push(`++ Service '${shadow.name}' ++`);
                 messages.shift();

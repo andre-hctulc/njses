@@ -1,4 +1,4 @@
-import { getShadow } from "./shadow";
+import { Shadow } from "./shadow";
 
 export type ServiceCtr<S = any> = new () => S;
 export type ServiceInstance<S> = S extends new () => infer I ? I : never;
@@ -37,7 +37,7 @@ export abstract class ServiceRegistery {
     }
 
     static register(service: ServiceCtr, eager = false): string {
-        const shadow = getShadow(service, true);
+        const shadow = Shadow.get(service, true);
         this.services.set(shadow.id, service);
         this.servicesReverse.set(service, shadow.id);
         this.serviceInstances.set(shadow.id, new service());
@@ -59,22 +59,27 @@ export abstract class ServiceRegistery {
 
         const mount = new Promise<any>(async (resolve, reject) => {
             try {
-                const shadow = getShadow(serviceInstance, true);
+                const shadow = Shadow.get(serviceInstance, true);
 
-                // construct
-                for (const cons of shadow.applyConstructors) {
-                    for (const consField of getShadow(cons, true).constructors) {
-                        const mountedCons = await this.mountService(cons);
+                // 1. call foreign constructors
+                for (const constr of shadow.applyConstructors) {
+                    for (const consField of Shadow.get(constr, true).constructors) {
+                        const mountedCons = await this.mountService(constr);
                         await mountedCons[consField](serviceInstance);
                     }
                 }
 
-                // initialize dep services first
+                // 2. initialize dep services
                 for (const depField in shadow.deps) {
-                    serviceInstance[depField] = await ServiceRegistery.mountService(shadow.deps[depField]);
+                    Object.defineProperty(serviceInstance, depField, {
+                        value: await ServiceRegistery.mountService(shadow.deps[depField]),
+                        enumerable: true,
+                        writable: false,
+                        configurable: false,
+                    });
                 }
 
-                // initialize the service
+                // 3. call initializers
                 for (const iniField of shadow.initializers) {
                     await serviceInstance[iniField]();
                 }
