@@ -33,7 +33,7 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
     };
 }
 
-export function Inject<S>(service: new () => S) {
+export function Use<S>(service: new () => S) {
     return function (target: any, propertyKey: string) {
         updateShadow(target, (shadow) => {
             shadow.deps[propertyKey] = service;
