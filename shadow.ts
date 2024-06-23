@@ -59,6 +59,8 @@ export interface ServiceShadow extends Partial<CustomShadow> {
             method: boolean;
         } & Partial<CustomShadowProp>
     >;
+    storeGet?: string | symbol;
+    storeSet?: string | symbol;
 }
 
 export type ShadowPropData = ServiceShadow["props"][string];
@@ -83,7 +85,8 @@ export abstract class Shadow {
     }
 
     static update(service: any, mutate: (sys: ServiceShadow) => ServiceShadow | void): ServiceShadow {
-        if (typeof service === "object") service = service.constructor;
+        if (typeof service === "object") service = service?.constructor;
+        if (!service) throw new Error("Not a valid service base");
         let shadow: undefined | ServiceShadow = (service as any)[SHADOW_SYMBOL];
         // init shadow if not exists
         if (!shadow) {

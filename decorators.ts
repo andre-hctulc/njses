@@ -9,7 +9,10 @@ import { ServiceShadowInit, Shadow } from "./shadow";
  */
 export function Service<S>(init: ServiceShadowInit = {}) {
     return function (service: ServiceCtr<S>) {
-        const shadow = Shadow.update(service, (sys) => ({ ...sys, name: init.name || randomCode(10), init }));
+        Shadow.update(service, (shadow) => {
+            shadow.init = init;
+            shadow.name = service.name;
+        });
         ServiceRegistery.register(service);
     };
 }
@@ -79,14 +82,11 @@ export function Subscription(interval: number) {
 
 /**
  * @prop_decorator
+ * @class_decorator
  */
 export function Seal(copy = false) {
     const deepSeal = (obj: any) => {
-        Object.seal(obj);
-
-        if (obj === null || typeof obj !== "object") {
-            return obj;
-        }
+        if (obj === null || typeof obj !== "object") return obj;
 
         for (const key in obj) {
             if (typeof obj[key] === "object" && obj[key] !== null) {
@@ -94,19 +94,95 @@ export function Seal(copy = false) {
             }
         }
 
-        return obj;
+        return Object.seal(obj);
     };
 
-    return function (target: any, propertyKey: string) {
-        const value: string = target[propertyKey];
+    return function (target: any, propertyKey?: string) {
+        if (!propertyKey) {
+            Object.seal(target);
+            Object.seal(target.prototype);
+            return;
+        }
+
+        let set = false;
+        let value: any;
 
         Object.defineProperty(target, propertyKey, {
-            value: deepSeal(copy ? structuredClone(value) : value),
+            get: () => {
+                return value;
+            },
+            set: (val) => {
+                if (!set) {
+                    set = true;
+                    value = deepSeal(copy ? structuredClone(val) : val);
+                }
+            },
             enumerable: true,
             configurable: false,
-            writable: false,
         });
     };
+}
+
+/**
+ * @prop_decorator
+ * @class_decorator
+ */
+export function Freeze(copy = false) {
+    const deepFreeze = (obj: any) => {
+        if (obj === null || typeof obj !== "object") return obj;
+
+        for (const key in obj) {
+            if (typeof obj[key] === "object" && obj[key] !== null) {
+                deepFreeze(obj[key]);
+            }
+        }
+
+        return Object.freeze(obj);
+    };
+
+    return function (target: any, propertyKey?: string) {
+        if (!propertyKey) {
+            Object.freeze(target);
+            Object.freeze(target.prototype);
+            return;
+        }
+
+        let set = false;
+        let value: any;
+
+        Object.defineProperty(target, propertyKey, {
+            get: () => {
+                return value;
+            },
+            set: (val) => {
+                if (!set) {
+                    set = true;
+                    value = deepFreeze(copy ? structuredClone(val) : val);
+                }
+            },
+            enumerable: true,
+            configurable: false,
+        });
+    };
+}
+
+/**
+ * @method_decorator
+ */
+export function StoreGet(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.update(target, (shadow) => {
+        shadow.storeGet = propertyKey;
+    });
+}
+
+/**
+ * @method_decorator
+ */
+
+export function StoreSet(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.update(target, (shadow) => {
+        shadow.storeSet = propertyKey;
+    });
 }
 
 /**
