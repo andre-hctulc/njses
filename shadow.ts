@@ -1,21 +1,37 @@
 import { randomCode } from "utils/util";
 import type { ServiceCtr } from "./service-registery";
 
-export interface ServiceShadowInit {
-    eager?: boolean;
-    name?: string;
-    namespace?: string;
-}
-
 /**
  * Use module augmentation to extend this interface.
  */
 export interface CustomShadow {}
 
+/**
+ * Use module augmentation to extend this interface.
+ */
+export interface CustomShadowInit {}
+
+/**
+ * Use module augmentation to extend this interface.
+ */
+export interface CustomShadowProp {}
+
+/**
+ * Use module augmentation to extend this interface.
+ */
+export interface CustomShadowParam {}
+
 export interface ServiceShadow extends Partial<CustomShadow> {
     id: string;
     name: string;
-    init: ServiceShadowInit;
+    init: Partial<
+        // default init
+        {
+            eager: boolean;
+            name: string;
+            namespace: string;
+        } & CustomShadowInit
+    >;
     /** field names */
     initializers: Set<string>;
     /** field names */
@@ -24,10 +40,30 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     applyConstructors: Set<ServiceCtr>;
     /** `<fieldName, serviceId>` */
     deps: Record<string, ServiceCtr>;
+    /** Dependencies, that do not need to be injected */
+    sideEffects: Set<ServiceCtr>;
     events: Record<string, Set<(...args: any) => void>>;
     ctx: Record<string, any>;
-    props: Record<string, { params: Record<number, any> }>;
+    props: Record<
+        string | symbol,
+        // default prop
+        {
+            field: string | symbol;
+            params: Record<
+                number,
+                // default param
+                {
+                    _validate?: any;
+                } & Partial<CustomShadowParam>
+            >;
+            method: boolean;
+        } & Partial<CustomShadowProp>
+    >;
 }
+
+export type ShadowPropData = ServiceShadow["props"][string];
+export type ShadowParamData = ShadowPropData["params"][number];
+export type ServiceShadowInit = ServiceShadow["init"];
 
 const SHADOW_SYMBOL = Symbol("$hadow");
 
@@ -62,6 +98,7 @@ export abstract class Shadow {
                 init: {},
                 ctx: {},
                 props: {},
+                sideEffects: new Set(),
             };
         }
         shadow = mutate(shadow) || shadow;
@@ -105,9 +142,15 @@ export abstract class Shadow {
         return shadow.ctx[key];
     }
 
-    static addParamData(service: any, propertyKey: string, paramIndex: number, data: object) {
+    static addParamData(
+        service: any,
+        propertyKey: string | symbol,
+        paramIndex: number,
+        data: ShadowParamData
+    ) {
         this.update(service, (sys) => {
-            if (!sys.props[propertyKey]) sys.props[propertyKey] = { params: {} };
+            if (!sys.props[propertyKey])
+                sys.props[propertyKey] = { field: propertyKey, params: {}, method: true };
             sys.props[propertyKey].params[paramIndex] = {
                 ...sys.props[propertyKey].params[paramIndex],
                 ...data,
@@ -115,19 +158,93 @@ export abstract class Shadow {
         });
     }
 
-    static getParamData(service: any, propertyKey: string, paramIndex: number): any {
+    static getPropData(service: any, propertyKey: string | symbol): ShadowPropData | null {
         const shadow = this.get(service, true);
-        return shadow.props[propertyKey]?.params[paramIndex];
+        return shadow.props[propertyKey];
     }
 
-    static addPropData(service: any, propertyKey: string, data: object) {
+    static hasProp(service: any, propertyKey: string | symbol): boolean {
+        const shadow = this.get(service, true);
+        return !!shadow.props[propertyKey];
+    }
+
+    static getParamData(
+        service: any,
+        propertyKey: string | symbol,
+        paramIndex: number
+    ): ShadowParamData | null {
+        const shadow = this.get(service, true);
+        return shadow.props[propertyKey]?.params[paramIndex] || null;
+    }
+
+    static getParams(service: any, propertyKey: string | symbol): ShadowPropData["params"] | null {
+        const prop = this.getPropData(service, propertyKey);
+        return prop?.params || null;
+    }
+
+    static addPropData(service: any, propertyKey: string | symbol, data: Partial<ShadowPropData>) {
         this.update(service, (sys) => {
-            sys.props[propertyKey] = { ...sys.props[propertyKey], ...data };
+            sys.props[propertyKey] = {
+                field: propertyKey as string,
+                method: false,
+                ...(sys.props[propertyKey] as Partial<ShadowPropData>),
+                ...data,
+                params: { ...sys.props[propertyKey].params, ...data.params },
+            };
         });
     }
 
-    static getPropData(service: any, propertyKey: string, paramIndex: number): any {
-        const shadow = this.get(service, true);
-        return shadow.props[propertyKey];
+    static forEachArg(
+        service: any,
+        propertyKey: string | symbol,
+        args: any[],
+        callback: (index: number, arg: any, paramData: ShadowParamData | null) => void
+    ) {
+        this.mapArgs(service, propertyKey, args, callback);
+    }
+
+    static mapArgs<T>(
+        service: any,
+        propertyKey: string | symbol,
+        args: any[],
+        callback: (index: number, arg: any, paramData: ShadowParamData | null) => T
+    ): T[] {
+        const mapped: T[] = [...args];
+        for (let i = 0; i < args.length; i++) {
+            const arg = args[i];
+            const data = this.getParamData(service, propertyKey, i);
+            if (data) mapped.push(callback(i, arg, data));
+        }
+        return mapped;
+    }
+
+    static addInitializer(service: any, fieldName: string) {
+        this.update(service, (sys) => {
+            sys.initializers.add(fieldName);
+        });
+    }
+
+    static addConstructor(service: any, fieldName: string) {
+        this.update(service, (sys) => {
+            sys.constructors.add(fieldName);
+        });
+    }
+
+    static addApplyConstructor(service: any, ctr: ServiceCtr) {
+        this.update(service, (sys) => {
+            sys.applyConstructors.add(ctr);
+        });
+    }
+
+    static addDependency(service: any, fieldName: string, dep: ServiceCtr) {
+        this.update(service, (sys) => {
+            sys.deps[fieldName] = dep;
+        });
+    }
+
+    static addSideEfects(service: any, ...effects: ServiceCtr[]) {
+        this.update(service, (sys) => {
+            effects.forEach((c) => sys.sideEffects.add(c));
+        });
     }
 }

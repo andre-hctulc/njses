@@ -18,9 +18,7 @@ export function Service<S>(init: ServiceShadowInit = {}) {
  * @method_decorator
  */
 export function Constructor<T = any>(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.update(target, (shadow) => {
-        shadow.constructors.add(propertyKey);
-    });
+    Shadow.addConstructor(target, propertyKey);
 }
 
 /**
@@ -45,11 +43,18 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
 /**
  * @property_decorator
  */
-export function Use<S>(service: new () => S) {
+export function Use(service: ServiceCtr) {
     return function (target: any, propertyKey: string) {
-        Shadow.update(target, (shadow) => {
-            shadow.deps[propertyKey] = service;
-        });
+        Shadow.addDependency(target, propertyKey, service);
+    };
+}
+
+/**
+ * @class_decorator
+ */
+export function SideEffects(...effects: ServiceCtr[]) {
+    return function (ctr: any) {
+        Shadow.addSideEfects(ctr, ...effects);
     };
 }
 
@@ -57,9 +62,7 @@ export function Use<S>(service: new () => S) {
  * @method_decorator
  */
 export function Init(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.update(target, (shadow) => {
-        shadow.initializers.add(propertyKey);
-    });
+    Shadow.addInitializer(target, propertyKey);
 }
 
 /**
@@ -122,28 +125,25 @@ export function Val<V>(validate?: (value: V) => V) {
     ) {
         // If parameter: register parameter validation
         if (typeof paramIndexOrDecorator === "number") {
-            Shadow.addParamData(target, propertyKey as string, paramIndexOrDecorator, { _val: validate });
+            Shadow.addParamData(target, propertyKey, paramIndexOrDecorator, { _validate: validate });
         }
         // If function: validate args
         else {
             const originalMethod = paramIndexOrDecorator.value;
             paramIndexOrDecorator.value = function (...args: any[]) {
-                const shadow = Shadow.get(target, true);
-                const params = [...args];
-                if (shadow.props[propertyKey as string] || validate) {
-                    for (let i = 0; i < args.length; i++) {
-                        const paramData: any = shadow.props[propertyKey as string].params[i];
-                        // use parameter validate first
-                        if (paramData?._val) {
-                            params[i] = paramData._val(args[i]);
-                        }
-                        // use function based validate (if given) to validate all parameters
-                        else if (validate) {
-                            params[i] = validate(args[i]);
-                        }
+                const validatedParams = Shadow.mapArgs(target, propertyKey, args, (i, arg, data) => {
+                    // Use param based validate (if given)
+                    if (data?._validate) {
+                        return data._validate(args[i]);
                     }
-                }
-                return originalMethod.apply(this, params);
+                    // use function based validate (if given) to validate all parameters
+                    else if (validate) {
+                        return validate(args[i]);
+                    }
+
+                    return arg;
+                });
+                return originalMethod.apply(this, validatedParams);
             };
         }
     };
@@ -166,7 +166,9 @@ Val.arr = (value: any[]) => {
     return value;
 };
 Val.obj = (value: object) => {
-    if (!value || typeof value !== "object")
-        throw new TypeError("Parameter Validation Error: Expected an object");
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new TypeError(
+            "Parameter Validation Error: Expected an object" + (Array.isArray(value) ? ". Got array" : "")
+        );
     return value;
 };

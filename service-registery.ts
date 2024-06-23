@@ -61,7 +61,12 @@ export abstract class ServiceRegistery {
             try {
                 const shadow = Shadow.get(serviceInstance, true);
 
-                // 1. call foreign constructors
+                // 0. Load side effects
+                for (const constr of shadow.sideEffects) {
+                    await this.mountService(constr);
+                }
+
+                // 1. Foreign constructors
                 for (const constr of shadow.applyConstructors) {
                     for (const consField of Shadow.get(constr, true).constructors) {
                         const mountedCons = await this.mountService(constr);
@@ -69,7 +74,7 @@ export abstract class ServiceRegistery {
                     }
                 }
 
-                // 2. initialize dep services
+                // 2. Initialize deps
                 for (const depField in shadow.deps) {
                     Object.defineProperty(serviceInstance, depField, {
                         value: await ServiceRegistery.mountService(shadow.deps[depField]),
@@ -79,7 +84,7 @@ export abstract class ServiceRegistery {
                     });
                 }
 
-                // 3. call initializers
+                // 3. Call initializers
                 for (const iniField of shadow.initializers) {
                     await serviceInstance[iniField]();
                 }
