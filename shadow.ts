@@ -32,15 +32,15 @@ export interface ServiceShadow extends Partial<CustomShadow> {
             namespace: string;
         } & CustomShadowInit
     >;
-    /** field names */
+    /** methods */
     initializers: Set<string>;
-    /** field names */
+    /** methods */
     constructors: Set<string>;
     /** services (factories) */
     applyConstructors: Set<ServiceCtr>;
-    /** `<fieldName, serviceId>` */
+    /** `<field, service>` */
     deps: Record<string, ServiceCtr>;
-    /** Dependencies, that do not need to be injected */
+    /** services - Dependencies, that do not need to be injected */
     sideEffects: Set<ServiceCtr>;
     events: Record<string, Set<(...args: any) => void>>;
     ctx: Record<string, any>;
@@ -142,22 +142,6 @@ export abstract class Shadow {
         return shadow.ctx[key];
     }
 
-    static addParamData(
-        service: any,
-        propertyKey: string | symbol,
-        paramIndex: number,
-        data: ShadowParamData
-    ) {
-        this.update(service, (sys) => {
-            if (!sys.props[propertyKey])
-                sys.props[propertyKey] = { field: propertyKey, params: {}, method: true };
-            sys.props[propertyKey].params[paramIndex] = {
-                ...sys.props[propertyKey].params[paramIndex],
-                ...data,
-            };
-        });
-    }
-
     static getPropData(service: any, propertyKey: string | symbol): ShadowPropData | null {
         const shadow = this.get(service, true);
         return shadow.props[propertyKey];
@@ -189,7 +173,23 @@ export abstract class Shadow {
                 method: false,
                 ...(sys.props[propertyKey] as Partial<ShadowPropData>),
                 ...data,
-                params: { ...sys.props[propertyKey].params, ...data.params },
+                params: { ...sys.props[propertyKey]?.params, ...data.params },
+            };
+        });
+    }
+
+    static addParamData(
+        service: any,
+        propertyKey: string | symbol,
+        paramIndex: number,
+        data: ShadowParamData
+    ) {
+        this.update(service, (sys) => {
+            if (!sys.props[propertyKey])
+                sys.props[propertyKey] = { field: propertyKey, params: {}, method: true };
+            sys.props[propertyKey].params[paramIndex] = {
+                ...sys.props[propertyKey]?.params[paramIndex],
+                ...data,
             };
         });
     }
