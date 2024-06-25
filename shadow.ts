@@ -1,5 +1,5 @@
-import { randomCode } from "utils/util";
 import type { ServiceCtr } from "./service-registery";
+import { randomId } from "./system";
 
 /**
  * Use module augmentation to extend this interface.
@@ -42,7 +42,7 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     deps: Record<string, ServiceCtr>;
     /** services - Dependencies, that do not need to be injected */
     sideEffects: Set<ServiceCtr>;
-    events: Record<string, Set<(...args: any) => void>>;
+    listeners: Record<string, Set<ServiceEventListener<any>>>;
     ctx: Record<string, any>;
     props: Record<
         string | symbol,
@@ -67,10 +67,13 @@ export type ShadowPropData = ServiceShadow["props"][string];
 export type ShadowParamData = ShadowPropData["params"][number];
 export type ServiceShadowInit = ServiceShadow["init"];
 
+export type ServiceEventListener<A extends [...any] = []> = (...args: A) => void;
+
 const SHADOW_SYMBOL = Symbol("$hadow");
 
-export interface ServiceEvents {
-    mount: () => void;
+/** Default event types are prefixed with '$' */
+export enum ServiceEvent {
+    MOUNT = "$mount",
 }
 
 export abstract class Shadow {
@@ -92,12 +95,12 @@ export abstract class Shadow {
         if (!shadow) {
             shadow = {
                 name: "",
-                id: randomCode(10),
+                id: randomId(),
                 deps: {},
                 initializers: new Set(),
                 constructors: new Set(),
                 applyConstructors: new Set(),
-                events: {},
+                listeners: {},
                 init: {},
                 ctx: {},
                 props: {},
@@ -109,29 +112,26 @@ export abstract class Shadow {
         return shadow;
     }
 
-    static dispatchEvent<E extends keyof ServiceEvents>(
-        service: any,
-        event: E,
-        ...args: Parameters<ServiceEvents[E]>
-    ) {
+    static emit<A extends [...any] = []>(service: any, event: string, ...args: A) {
         const shadow = this.get(service, true);
-        const listeners = shadow.events[event];
+        const listeners = shadow.listeners[event];
         if (!listeners) return;
         for (const listener of listeners) {
             listener(...args);
         }
     }
 
-    static addEventListener(service: any, event: string, listener: (...args: any) => any) {
+    static on<A extends [...any] = []>(service: any, event: string, listener: ServiceEventListener<A>) {
         const shadow = this.get(service, true);
-        if (!shadow.events[event]) shadow.events[event] = new Set();
-        shadow.events[event].add(listener);
+        if (!shadow.listeners[event]) shadow.listeners[event] = new Set();
+        shadow.listeners[event].add(listener);
+        return listener;
     }
 
-    static removeEventListener(service: any, event: string, listener: (...args: any) => any) {
+    static removeListener(service: any, event: string, listener: (...args: any) => any) {
         const shadow = this.get(service, true);
-        if (!shadow.events[event]) return;
-        shadow.events[event].delete(listener);
+        if (!shadow.listeners[event]) return;
+        shadow.listeners[event].delete(listener);
     }
 
     static setCtx(service: any, key: string, value: any) {

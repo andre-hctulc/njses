@@ -2,6 +2,13 @@ import { Shadow } from "./shadow";
 
 export type ServiceCtr<S = any> = new () => S;
 export type ServiceInstance<S> = S extends new () => infer I ? I : never;
+export type ServiceCtrMap = Record<string, ServiceCtr<any>>;
+export type Usable = ServiceCtr<any> | ServiceCtrMap;
+export type Injection<U extends Usable> = U extends Record<string, ServiceCtr<any>>
+    ? {
+          [K in keyof U]: ServiceInstance<U[K]>;
+      }
+    : ServiceInstance<U>;
 
 export abstract class ServiceRegistery {
     private static services: Map<string, ServiceCtr> = new Map();
@@ -9,9 +16,7 @@ export abstract class ServiceRegistery {
     private static serviceMounts: Map<string, Promise<ServiceInstance<ServiceCtr>>> = new Map();
     private static serviceInstances: Map<string, ServiceInstance<ServiceCtr>> = new Map();
 
-    static async inject<S extends ServiceCtr | Record<string, ServiceCtr>>(
-        service: S
-    ): Promise<S extends ServiceCtr ? ServiceInstance<S> : { [K in keyof S]: ServiceInstance<S[K]> }> {
+    static async inject<U extends Usable>(service: U): Promise<Injection<U>> {
         if (typeof service === "function") {
             const instance = await this.mountService(service);
             return instance as any;

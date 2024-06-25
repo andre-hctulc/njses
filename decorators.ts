@@ -1,8 +1,39 @@
-import { randomCode } from "utils/util";
-import { ServiceCtr, ServiceRegistery } from "./service-registery";
+import type { ModuleInit } from "./modules";
+import { ServiceCtr, ServiceRegistery, ServiceCtrMap } from "./service-registery";
 import { ServiceShadowInit, Shadow } from "./shadow";
 
 // TODO event decorators @On @Emit
+
+/**
+ * @method_decorator
+ */
+export function On(emitter: ServiceCtr) {
+    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+        const originalMethod = descriptor.value;
+        const shadow = Shadow.get(emitter);
+
+        descriptor.value = function (...args: any[]) {
+            const result = originalMethod.apply(this, args);
+            Shadow.emit(shadow, propertyKey, result);
+            return result;
+        };
+    };
+}
+
+/**
+ * @class_decorator
+ */
+export function Module<U extends ServiceCtrMap>(init: ModuleInit<U>) {
+    return function (service: ServiceCtr) {
+        // register as service
+        Service({ name: init.name })(service);
+        for (const key in init.deps) {
+            const dep = init.deps[key];
+            Shadow.addDependency(service, key, dep);
+            if (init.sideEffects) Shadow.addSideEfects(service, ...init.sideEffects);
+        }
+    };
+}
 
 /**
  * @class_decorator
