@@ -1,4 +1,4 @@
-import type { ServiceCtr } from "./service-registery";
+import type { ServiceCtr, ServiceInstance, Usable } from "./service-registery";
 import { randomId } from "./system";
 
 /**
@@ -39,9 +39,9 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     /** services (factories) */
     applyConstructors: Set<ServiceCtr>;
     /** `<field, service>` */
-    deps: Record<string, ServiceCtr>;
+    deps: Record<string, Usable>;
     /** services - Dependencies, that do not need to be injected */
-    sideEffects: Set<ServiceCtr>;
+    prerequisites: Set<ServiceCtr>;
     listeners: Record<string, Set<ServiceEventListener<any>>>;
     ctx: Record<string, any>;
     props: Record<
@@ -67,7 +67,7 @@ export type ShadowPropData = ServiceShadow["props"][string];
 export type ShadowParamData = ShadowPropData["params"][number];
 export type ServiceShadowInit = ServiceShadow["init"];
 
-export type ServiceEventListener<A extends [...any] = []> = (...args: A) => void;
+export type ServiceEventListener<A extends [...any] = []> = (this: ServiceInstance<any>, ...args: A) => void;
 
 const SHADOW_SYMBOL = Symbol("$hadow");
 
@@ -104,7 +104,7 @@ export abstract class Shadow {
                 init: {},
                 ctx: {},
                 props: {},
-                sideEffects: new Set(),
+                prerequisites: new Set(),
             };
         }
         shadow = mutate(shadow) || shadow;
@@ -239,15 +239,15 @@ export abstract class Shadow {
         });
     }
 
-    static addDependency(service: any, fieldName: string, dep: ServiceCtr) {
+    static addDependency(service: any, fieldName: string, dep: Usable) {
         this.update(service, (sys) => {
             sys.deps[fieldName] = dep;
         });
     }
 
-    static addSideEfects(service: any, ...effects: ServiceCtr[]) {
+    static addPrerequisite(service: any, ...effects: ServiceCtr[]) {
         this.update(service, (sys) => {
-            effects.forEach((c) => sys.sideEffects.add(c));
+            effects.forEach((c) => sys.prerequisites.add(c));
         });
     }
 }

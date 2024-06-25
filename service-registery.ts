@@ -67,7 +67,7 @@ export abstract class ServiceRegistery {
                 const shadow = Shadow.get(serviceInstance, true);
 
                 // 0. Load side effects
-                for (const constr of shadow.sideEffects) {
+                for (const constr of shadow.prerequisites) {
                     await this.mountService(constr);
                 }
 
@@ -81,8 +81,20 @@ export abstract class ServiceRegistery {
 
                 // 2. Initialize deps
                 for (const depField in shadow.deps) {
+                    let val: any;
+                    // Ctr
+                    if (shadow.deps[depField] instanceof Function)
+                        val = await ServiceRegistery.mountService(shadow.deps[depField]);
+                    // Map
+                    else {
+                        val = {};
+                        for (const key in shadow.deps[depField]) {
+                            val[key] = await ServiceRegistery.mountService(shadow.deps[depField][key]);
+                        }
+                        Object.freeze(val);
+                    }
                     Object.defineProperty(serviceInstance, depField, {
-                        value: await ServiceRegistery.mountService(shadow.deps[depField]),
+                        value: val,
                         enumerable: true,
                         writable: false,
                         configurable: false,

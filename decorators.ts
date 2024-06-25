@@ -1,20 +1,33 @@
 import type { ModuleInit } from "./modules";
-import { ServiceCtr, ServiceRegistery, ServiceCtrMap } from "./service-registery";
+import { ServiceCtr, ServiceRegistery, ServiceCtrMap, Usable } from "./service-registery";
 import { ServiceShadowInit, Shadow } from "./shadow";
 
-// TODO event decorators @On @Emit
-
 /**
+ * The decorated method receives the event arguments as arguments.
  * @method_decorator
  */
-export function On(emitter: ServiceCtr) {
+export function On<A extends [...any] = []>(emitter: ServiceCtr, eventType: string) {
+    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+        Shadow.on(emitter, eventType, function (...args: any[]) {
+            const listenerInstance = ServiceRegistery.getInstance(target);
+            if (listenerInstance) listenerInstance[propertyKey](...args);
+        });
+    };
+}
+
+/**
+ * The return value of the decorated method will be used as arguments for event handlers.
+ * Return either a single argument or an array of arguments.
+ * @method_decorator
+ */
+export function Emit<A extends [...any] = []>(eventType: string) {
     return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
         const originalMethod = descriptor.value;
-        const shadow = Shadow.get(emitter);
 
         descriptor.value = function (...args: any[]) {
-            const result = originalMethod.apply(this, args);
-            Shadow.emit(shadow, propertyKey, result);
+            const result: any[] = originalMethod.apply(this, args);
+            const newArgs = Array.isArray(result) ? result : result ? [result] : [];
+            Shadow.emit(target, eventType, ...newArgs);
             return result;
         };
     };
@@ -27,11 +40,7 @@ export function Module<U extends ServiceCtrMap>(init: ModuleInit<U>) {
     return function (service: ServiceCtr) {
         // register as service
         Service({ name: init.name })(service);
-        for (const key in init.deps) {
-            const dep = init.deps[key];
-            Shadow.addDependency(service, key, dep);
-            if (init.sideEffects) Shadow.addSideEfects(service, ...init.sideEffects);
-        }
+        Shadow.addDependency(service, "d", init.deps || {});
     };
 }
 
@@ -49,6 +58,17 @@ export function Service<S>(init: ServiceShadowInit = {}) {
 }
 
 /**
+ * Injects one or more services.
+ * @property_decorator
+ */
+export function Use(service: Usable) {
+    return function (target: any, propertyKey: string) {
+        Shadow.addDependency(target, propertyKey, service);
+    };
+}
+
+/**
+ * MArgks this method as a constructor for other services.
  * @method_decorator
  */
 export function Constructor<T = any>(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
@@ -56,6 +76,7 @@ export function Constructor<T = any>(target: any, propertyKey: string, descripto
 }
 
 /**
+ * Cacthes all thrown errors and rethrows them as the mapped error.
  * @method_decorator
  */
 export function Throws<E extends Error>(error: (err: unknown) => E) {
@@ -75,24 +96,17 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
 }
 
 /**
- * @property_decorator
- */
-export function Use(service: ServiceCtr) {
-    return function (target: any, propertyKey: string) {
-        Shadow.addDependency(target, propertyKey, service);
-    };
-}
-
-/**
+ * The given services will be initialized before this service.
  * @class_decorator
  */
-export function SideEffects(...effects: ServiceCtr[]) {
+export function Prerequisite(...effects: ServiceCtr[]) {
     return function (ctr: any) {
-        Shadow.addSideEfects(ctr, ...effects);
+        Shadow.addPrerequisite(ctr, ...effects);
     };
 }
 
 /**
+ * Marks the decorated method as initializer.
  * @method_decorator
  */
 export function Init(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
@@ -112,6 +126,7 @@ export function Subscription(interval: number) {
 }
 
 /**
+ * Deep seals the property or class.
  * @prop_decorator
  * @class_decorator
  */
@@ -155,6 +170,7 @@ export function Seal(copy = false) {
 }
 
 /**
+ * Deep freezes the property or class.
  * @prop_decorator
  * @class_decorator
  */
@@ -209,7 +225,6 @@ export function StoreGet(target: any, propertyKey: string, descriptor: PropertyD
 /**
  * @method_decorator
  */
-
 export function StoreSet(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.update(target, (shadow) => {
         shadow.storeSet = propertyKey;
