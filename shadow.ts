@@ -44,6 +44,7 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     sideEffects: Set<ServiceCtr>;
     /** `<field, serviceId>` */
     deps: Record<Field, Usable>;
+    /** Define some context */
     ctx: Record<string, any>;
     /** Stores data for each prop (field or method) and it's params */
     props: Record<
