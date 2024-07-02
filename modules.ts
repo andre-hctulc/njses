@@ -1,13 +1,12 @@
-import type { ServiceCtr, ServiceCtrMap } from "./service-registery";
+import type { ServiceCollection, ServiceCollectionInterface, ServiceCtr } from "./service-registery";
 
 export const MODULE_DEPS_FIELD = "d";
 
-export type ModuleInit<D extends ServiceCtrMap = {}> = {
+export type ModuleInit<D extends ServiceCollectionInterface> = {
     name?: string;
     sideEffects?: ServiceCtr[];
-    deps?: D;
-};
+} & (keyof D extends never ? { deps?: ServiceCollection } : { deps: ServiceCollection<D> });
 
-export interface ModuleInterface<U extends ServiceCtrMap> {
+export interface ModuleInterface<U extends ServiceCollectionInterface> {
     [MODULE_DEPS_FIELD]: U;
 }

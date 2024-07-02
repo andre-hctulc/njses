@@ -1,6 +1,53 @@
 import type { ModuleInit } from "./modules";
-import { ServiceCtr, ServiceRegistery, ServiceCtrMap, Usable } from "./service-registery";
-import { ServiceShadowInit, Shadow } from "./shadow";
+import { ServiceCtr, ServiceRegistery, Usable, ServiceCollectionInterface } from "./service-registery";
+import { ShadowInit, Shadow } from "./shadow";
+import { FIELD_NAME } from "./system";
+
+/**
+ * Modules are Services that bundle dependencies and side effects.
+ * @class_decorator
+ */
+export function Module<U extends ServiceCollectionInterface>(init: ModuleInit<U>) {
+    return function (service: ServiceCtr) {
+        // register as service
+        Service({ name: init.name })(service);
+        Shadow.addDep(service, "d", init.deps || {});
+        if (init.sideEffects) Shadow.addSideEffect(service, ...init.sideEffects);
+    };
+}
+
+/**
+ * Services are classes that are initialized once and can be injected into other services.
+ * @class_decorator
+ */
+export function Service<S>(init: ShadowInit = {}) {
+    return function (service: ServiceCtr<S>) {
+        Shadow.update(service, (shadow) => {
+            shadow.init = init;
+            shadow.name = service.name;
+        });
+        ServiceRegistery.register(service);
+    };
+}
+
+/**
+ * Executes the decorated method after the service is initialized.
+ * @method_decorator
+ */
+export function Mount(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.MOUNT, propertyKey);
+}
+
+/**
+ * Passes as parameters to factory methods. You must return an array of parameters.
+ * @method_decorator
+ * @prop_decorator
+ */
+export function Use<U extends Usable>(usable: U) {
+    return function (target: any, propertyKey: string | symbol) {
+        Shadow.addDep(target, propertyKey, usable);
+    };
+}
 
 /**
  * The decorated method receives the event arguments as arguments.
@@ -10,7 +57,7 @@ export function On<A extends [...any] = []>(emitter: ServiceCtr, eventType: stri
     return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.on(emitter, eventType, function (...args: any[]) {
             const listenerInstance = ServiceRegistery.getInstance(target);
-            if (listenerInstance) listenerInstance[propertyKey](...args);
+            if (listenerInstance) ServiceRegistery.resolve(target, propertyKey, args);
         });
     };
 }
@@ -34,45 +81,37 @@ export function Emit<A extends [...any] = []>(eventType: string) {
 }
 
 /**
- * @class_decorator
- */
-export function Module<U extends ServiceCtrMap>(init: ModuleInit<U>) {
-    return function (service: ServiceCtr) {
-        // register as service
-        Service({ name: init.name })(service);
-        Shadow.addDependency(service, "d", init.deps || {});
-    };
-}
-
-/**
- * @class_decorator
- */
-export function Service<S>(init: ServiceShadowInit = {}) {
-    return function (service: ServiceCtr<S>) {
-        Shadow.update(service, (shadow) => {
-            shadow.init = init;
-            shadow.name = service.name;
-        });
-        ServiceRegistery.register(service);
-    };
-}
-
-/**
- * Injects one or more services.
- * @property_decorator
- */
-export function Use(service: Usable) {
-    return function (target: any, propertyKey: string) {
-        Shadow.addDependency(target, propertyKey, service);
-    };
-}
-
-/**
- * MArgks this method as a constructor for other services.
+ * Factories are used to create instances of a service, called products. Factory methods are applied to the service instance.
+ * The factory receive the service instance and possible parameters (`FactoryParams`) to extend the instance.
  * @method_decorator
  */
-export function Constructor<T = any>(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addConstructor(target, propertyKey);
+export function Factory<P = any>(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.FACTORY, propertyKey);
+}
+
+/**
+ * Passes as parameters to factory methods. You must return an array of parameters.
+ * @method_decorator
+ * @prop_decorator
+ */
+export function ProductParams<F = any>(factory: ServiceCtr<F>) {
+    return function (target: any, propertyKey: string | symbol) {
+        Shadow.update(target, (shadow) => {
+            Shadow.setProductParam(factory, target, propertyKey);
+        });
+    };
+}
+
+/**
+ * Passes as parameters to factory methods. You must return an array of parameters.
+ * @method_decorator
+ */
+export function Product<F = any>(factory: ServiceCtr<F>) {
+    return function (target: any) {
+        Shadow.update(target, (shadow) => {
+            Shadow.addFactory(factory, target);
+        });
+    };
 }
 
 /**
@@ -96,21 +135,11 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
 }
 
 /**
- * The given services will be initialized before this service.
- * @class_decorator
- */
-export function Prerequisite(...effects: ServiceCtr[]) {
-    return function (ctr: any) {
-        Shadow.addPrerequisite(ctr, ...effects);
-    };
-}
-
-/**
  * Marks the decorated method as initializer.
  * @method_decorator
  */
 export function Init(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addInitializer(target, propertyKey);
+    Shadow.addMethod(target, FIELD_NAME.INIT, propertyKey);
 }
 
 /**
@@ -217,18 +246,21 @@ export function Freeze(copy = false) {
  * @method_decorator
  */
 export function StoreGet(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.update(target, (shadow) => {
-        shadow.storeGet = propertyKey;
-    });
+    Shadow.addMethod(target, FIELD_NAME.STORE_SET, propertyKey);
 }
 
 /**
  * @method_decorator
  */
 export function StoreSet(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.update(target, (shadow) => {
-        shadow.storeSet = propertyKey;
-    });
+    Shadow.addMethod(target, FIELD_NAME.STORE_GET, propertyKey);
+}
+
+/**
+ * @method_decorator
+ */
+export function StoreGetAll(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.STORE_GET_ALL, propertyKey);
 }
 
 /**

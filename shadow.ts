@@ -1,6 +1,14 @@
 import type { ServiceCtr, ServiceInstance, Usable } from "./service-registery";
 import { randomId } from "./system";
 
+type Field = string | symbol;
+
+export interface DefaultShadowInit {
+    eager?: boolean;
+    name?: string;
+    namespace?: string;
+}
+
 /**
  * Use module augmentation to extend this interface.
  */
@@ -22,28 +30,22 @@ export interface CustomShadowProp {}
 export interface CustomShadowParam {}
 
 export interface ServiceShadow extends Partial<CustomShadow> {
+    /** Service id */
     id: string;
+    /** Service name */
     name: string;
-    init: Partial<
-        // default init
-        {
-            eager: boolean;
-            name: string;
-            namespace: string;
-        } & CustomShadowInit
-    >;
-    /** methods */
-    initializers: Set<string>;
-    /** methods */
-    constructors: Set<string>;
+    /** Service init */
+    init: DefaultShadowInit & Partial<CustomShadow>;
     /** services (factories) */
-    applyConstructors: Set<ServiceCtr>;
-    /** `<field, service>` */
-    deps: Record<string, Usable>;
-    /** services - Dependencies, that do not need to be injected */
-    prerequisites: Set<ServiceCtr>;
-    listeners: Record<string, Set<ServiceEventListener<any>>>;
+    productOf: Set<ServiceCtr>;
+    /** <factory, field/method>  */
+    productParams: Map<ServiceCtr, Field>;
+    /** prerequisites that do not need to be injected  */
+    sideEffects: Set<ServiceCtr>;
+    /** `<field, serviceId>` */
+    deps: Record<Field, Usable>;
     ctx: Record<string, any>;
+    /** Stores data for each prop (field or method) and it's params */
     props: Record<
         string | symbol,
         // default prop
@@ -59,13 +61,19 @@ export interface ServiceShadow extends Partial<CustomShadow> {
             method: boolean;
         } & Partial<CustomShadowProp>
     >;
-    storeGet?: string | symbol;
-    storeSet?: string | symbol;
+    /** <fieldType, fields> - Can be used to memorize special fields. e.g. options */
+    fields: Record<string, Set<Field>>;
+    /** <methodType, methods> - Can be used to memorize special methods. e.g. initializers   */
+    methods: Record<string, Set<string>>;
+    /** Events */
+    events: Record<string, Set<(...args: any) => void>>;
+    /** Registerd event listeners */
+    listeners: Record<string, Set<ServiceEventListener<any>>>;
 }
 
 export type ShadowPropData = ServiceShadow["props"][string];
 export type ShadowParamData = ShadowPropData["params"][number];
-export type ServiceShadowInit = ServiceShadow["init"];
+export type ShadowInit = ServiceShadow["init"];
 
 export type ServiceEventListener<A extends [...any] = []> = (this: ServiceInstance<any>, ...args: A) => void;
 
@@ -77,6 +85,7 @@ export enum ServiceEvent {
 }
 
 export abstract class Shadow {
+    /** Retrieves the shadow of the given service */
     static get<R extends boolean = false>(
         service: any,
         required?: R
@@ -87,6 +96,7 @@ export abstract class Shadow {
         return sys || null;
     }
 
+    /** Updates the shadow of the given service */
     static update(service: any, mutate: (sys: ServiceShadow) => ServiceShadow | void): ServiceShadow {
         if (typeof service === "object") service = service?.constructor;
         if (!service) throw new Error("Not a valid service base");
@@ -97,14 +107,16 @@ export abstract class Shadow {
                 name: "",
                 id: randomId(),
                 deps: {},
-                initializers: new Set(),
-                constructors: new Set(),
-                applyConstructors: new Set(),
-                listeners: {},
-                init: {},
+                productOf: new Set(),
+                productParams: new Map(),
+                events: {},
+                init: {} as any,
                 ctx: {},
                 props: {},
-                prerequisites: new Set(),
+                listeners: {},
+                sideEffects: new Set(),
+                fields: {},
+                methods: {},
             };
         }
         shadow = mutate(shadow) || shadow;
@@ -112,29 +124,34 @@ export abstract class Shadow {
         return shadow;
     }
 
-    static emit<A extends [...any] = []>(service: any, event: string, ...args: A) {
-        const shadow = this.get(service, true);
-        const listeners = shadow.listeners[event];
-        if (!listeners) return;
-        for (const listener of listeners) {
-            listener(...args);
-        }
+    static addDep(service: any, field: Field, dep: Usable): void {
+        this.update(service, (sys) => {
+            sys.deps[field] = dep;
+        });
     }
 
-    static on<A extends [...any] = []>(service: any, event: string, listener: ServiceEventListener<A>) {
+    static getDeps(service: any): Record<string, Usable> {
         const shadow = this.get(service, true);
-        if (!shadow.listeners[event]) shadow.listeners[event] = new Set();
-        shadow.listeners[event].add(listener);
-        return listener;
+        return shadow.deps;
     }
 
-    static removeListener(service: any, event: string, listener: (...args: any) => any) {
+    static getDep(service: any, field: string): Usable | null {
         const shadow = this.get(service, true);
-        if (!shadow.listeners[event]) return;
-        shadow.listeners[event].delete(listener);
+        return shadow.deps[field] || null;
     }
 
-    static setCtx(service: any, key: string, value: any) {
+    static addSideEffect(service: any, ...effects: ServiceCtr[]): void {
+        this.update(service, (sys) => {
+            effects.forEach((c) => sys.sideEffects.add(c));
+        });
+    }
+
+    static getSideEffects(service: any): ServiceCtr[] {
+        const shadow = this.get(service, true);
+        return Array.from(shadow.sideEffects);
+    }
+
+    static setCtx(service: any, key: string, value: any): void {
         this.update(service, (sys) => {
             sys.ctx[key] = value;
         });
@@ -221,33 +238,87 @@ export abstract class Shadow {
         return mapped;
     }
 
-    static addInitializer(service: any, fieldName: string) {
+    static addField(service: any, type: string, field: Field) {
         this.update(service, (sys) => {
-            sys.initializers.add(fieldName);
+            if (!sys.fields[type]) sys.fields[type] = new Set();
+            sys.fields[type].add(field);
         });
     }
 
-    static addConstructor(service: any, fieldName: string) {
+    static getFields(service: any, type: string): Field[] {
+        const shadow = this.get(service, true);
+        return Array.from(shadow.fields[type]);
+    }
+
+    static getField<R extends boolean = false>(
+        service: any,
+        type: string,
+        required?: R
+    ): R extends true ? Field : Field | null {
+        const shadow = this.get(service, true);
+        const first = shadow.fields[type].values().next().value;
+        if (required && first == null) throw new Error(`No field of type "${type}"`);
+        return first;
+    }
+
+    static addMethod(service: any, type: string, method: string) {
         this.update(service, (sys) => {
-            sys.constructors.add(fieldName);
+            if (!sys.methods[type]) sys.methods[type] = new Set();
+            sys.methods[type].add(method);
         });
     }
 
-    static addApplyConstructor(service: any, ctr: ServiceCtr) {
-        this.update(service, (sys) => {
-            sys.applyConstructors.add(ctr);
+    static getMethods(service: any, type: string): string[] {
+        const shadow = this.get(service, true);
+        return Array.from(shadow.methods[type]);
+    }
+
+    static getMethod<R extends boolean = false>(
+        service: any,
+        type: string,
+        required?: R
+    ): R extends true ? string : string | null {
+        const shadow = this.get(service, true);
+        const first = shadow.methods[type].values().next().value;
+        if (required && first == null) throw new Error(`No method of type "${type}"`);
+        return first;
+    }
+
+    static setProductParam(factory: ServiceCtr, target: ServiceCtr, field: Field) {
+        this.update(factory, (sys) => {
+            sys.productParams.set(target, field);
         });
     }
 
-    static addDependency(service: any, fieldName: string, dep: Usable) {
-        this.update(service, (sys) => {
-            sys.deps[fieldName] = dep;
+    static addFactory(factory: ServiceCtr, target: ServiceCtr) {
+        this.update(target, (sys) => {
+            sys.productOf.add(factory);
         });
     }
 
-    static addPrerequisite(service: any, ...effects: ServiceCtr[]) {
-        this.update(service, (sys) => {
-            effects.forEach((c) => sys.prerequisites.add(c));
-        });
+    static getFactories(target: ServiceCtr): ServiceCtr[] {
+        const shadow = this.get(target, true);
+        return Array.from(shadow.productOf);
+    }
+
+    static getProductParam(factory: ServiceCtr, target: any): Field | null {
+        const shadow = this.get(target, true);
+        return shadow.productParams.get(factory) || null;
+    }
+
+    static emit<A extends [...any] = []>(service: any, event: string, ...args: A) {
+        const shadow = this.get(service, true);
+        const listeners = shadow.listeners[event];
+        if (!listeners) return;
+        for (const listener of listeners) {
+            listener(...args);
+        }
+    }
+
+    static on<A extends [...any] = []>(service: any, event: string, listener: ServiceEventListener<A>) {
+        const shadow = this.get(service, true);
+        if (!shadow.listeners[event]) shadow.listeners[event] = new Set();
+        shadow.listeners[event].add(listener);
+        return listener;
     }
 }

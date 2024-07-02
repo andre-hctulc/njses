@@ -1,9 +1,13 @@
 import { Shadow } from "./shadow";
+import { FIELD_NAME } from "./system";
 
 export type ServiceCtr<S = any> = new () => S;
-export type ServiceInstance<S> = S extends new () => infer I ? I : never;
-export type ServiceCtrMap = Record<string, ServiceCtr<any>>;
-export type Usable = ServiceCtr<any> | ServiceCtrMap;
+export type ServiceInstance<S = any> = S extends new () => infer I ? I : any;
+export type ServiceCollectionInterface = Record<string, any>;
+export type ServiceCollection<M extends ServiceCollectionInterface = any> = {
+    [K in keyof M]: ServiceCtr<M[K]>;
+};
+export type Usable = ServiceCtr<any> | ServiceCollection<any>;
 export type Injection<U extends Usable> = U extends Record<string, ServiceCtr<any>>
     ? {
           [K in keyof U]: ServiceInstance<U[K]>;
@@ -13,8 +17,8 @@ export type Injection<U extends Usable> = U extends Record<string, ServiceCtr<an
 export abstract class ServiceRegistery {
     private static services: Map<string, ServiceCtr> = new Map();
     private static servicesReverse: Map<ServiceCtr, string> = new Map();
-    private static serviceMounts: Map<string, Promise<ServiceInstance<ServiceCtr>>> = new Map();
-    private static serviceInstances: Map<string, ServiceInstance<ServiceCtr>> = new Map();
+    private static serviceMounts: Map<string, Promise<ServiceInstance>> = new Map();
+    private static serviceInstances: Map<string, ServiceInstance> = new Map();
 
     static async inject<U extends Usable>(service: U): Promise<Injection<U>> {
         if (typeof service === "function") {
@@ -35,85 +39,140 @@ export abstract class ServiceRegistery {
         return this.services.get(serviceId) || null;
     }
 
-    static getInstance(serviceName: string): ServiceInstance<ServiceCtr> | null {
+    static getInstance(serviceName: string): ServiceInstance | null {
         const service = this.get(serviceName);
         if (!service) return null;
-        return this.inject(service) as ServiceInstance<ServiceCtr>;
+        return this.inject(service) as ServiceInstance;
+    }
+
+    static getInstanceByCtr(service: ServiceCtr): ServiceInstance | null {
+        return this.getInstance(this.servicesReverse.get(service) as string);
+    }
+
+    private static constructService<S>(service: ServiceCtr<S>): S {
+        return new service();
     }
 
     static register(service: ServiceCtr, eager = false): string {
         const shadow = Shadow.get(service, true);
         this.services.set(shadow.id, service);
         this.servicesReverse.set(service, shadow.id);
-        this.serviceInstances.set(shadow.id, new service());
+        this.serviceInstances.set(shadow.id, this.constructService(service));
         if (eager) this.mountService(service);
         return shadow.id;
     }
 
-    static async mountService(service: ServiceCtr): Promise<any> {
-        const serviceId = this.servicesReverse.get(service);
+    /**
+     * @param staticMount If true, a registered service instance is used. If false, a new instance is created.
+     */
+    static async mountService(service: ServiceCtr, staticMount = true): Promise<any> {
+        let instance: any = this.getInstanceByCtr(service);
+        let serviceId: string | undefined;
 
-        if (!serviceId) throw new Error(`Service instance of '${service.name}' not found`);
-
-        const serviceInstance = this.serviceInstances.get(serviceId);
-
-        if (this.serviceMounts.has(serviceId)) {
-            const mounting = await this.serviceMounts.get(serviceId);
-            return mounting;
+        if (staticMount) {
+            serviceId = this.servicesReverse.get(service);
+            instance = this.getInstance(serviceId!);
+            if (!serviceId || !instance) throw new Error("Service not registered");
+            // return static instance if available
+            if (this.serviceMounts.has(serviceId)) {
+                const mounting = await this.serviceMounts.get(serviceId)!;
+                return mounting;
+            }
+        } else {
+            // Create always a new instance for non static mounts
+            instance = this.constructService(service);
         }
 
         const mount = new Promise<any>(async (resolve, reject) => {
+            const mountUsable = async (u: Usable) => {
+                if (typeof u === "function") return await this.mountService(u);
+                else {
+                    const obj: any = {};
+                    for (const key in u) {
+                        obj[key] = await mountUsable(u[key]);
+                    }
+                    Object.freeze(obj);
+                    return obj;
+                }
+            };
+
             try {
-                const shadow = Shadow.get(serviceInstance, true);
-
-                // 0. Load side effects
-                for (const constr of shadow.prerequisites) {
-                    await this.mountService(constr);
+                // 1. initialize side effects
+                for (const sideEffect of Shadow.getSideEffects(instance)) {
+                    await this.mountService(sideEffect);
                 }
 
-                // 1. Foreign constructors
-                for (const constr of shadow.applyConstructors) {
-                    for (const consField of Shadow.get(constr, true).constructors) {
-                        const mountedCons = await this.mountService(constr);
-                        await mountedCons[consField](serviceInstance);
-                    }
-                }
+                // 2. apply factories
+                for (const factory of Shadow.getFactories(instance)) {
+                    for (const factoryMethod of Shadow.getMethods(factory, FIELD_NAME.FACTORY)) {
+                        const mountedFactory = await this.register(factory, true);
 
-                // 2. Initialize deps
-                for (const depField in shadow.deps) {
-                    let val: any;
-                    // Ctr
-                    if (shadow.deps[depField] instanceof Function)
-                        val = await ServiceRegistery.mountService(shadow.deps[depField]);
-                    // Map
-                    else {
-                        val = {};
-                        for (const key in shadow.deps[depField]) {
-                            val[key] = await ServiceRegistery.mountService(shadow.deps[depField][key]);
+                        let params: any[] = [];
+                        const paramField = Shadow.getProductParam(factory, instance);
+
+                        if (paramField) {
+                            params = await this.resolve(instance, paramField);
+                            if (!Array.isArray(params)) params = [params];
                         }
-                        Object.freeze(val);
+
+                        await this.resolve(mountedFactory, factoryMethod, [service, ...params]);
                     }
-                    Object.defineProperty(serviceInstance, depField, {
-                        value: val,
-                        enumerable: true,
+                }
+
+                // 3. inject deps
+                for (const depField in Shadow.getDeps(instance)) {
+                    const usable = Shadow.getDep(instance, depField)!;
+                    // mount deps
+                    Object.defineProperty(instance, depField, {
+                        value: await mountUsable(usable),
                         writable: false,
-                        configurable: false,
+                        enumerable: true,
                     });
                 }
 
-                // 3. Call initializers
-                for (const iniField of shadow.initializers) {
-                    await serviceInstance[iniField]();
+                // 4. call initializers
+                for (const iniMethod of Shadow.getMethods(instance, FIELD_NAME.INIT)) {
+                    await this.resolve(instance, iniMethod);
                 }
 
-                resolve(serviceInstance);
+                // 5. call mounts
+                for (const mountMethod of Shadow.getMethods(instance, FIELD_NAME.MOUNT)) {
+                    // do not await!
+                    this.resolve(instance, mountMethod);
+                }
+
+                resolve(instance);
             } catch (err) {
                 reject(err);
             }
         });
 
-        this.serviceMounts.set(serviceId, mount);
+        // if static mount, save the promise
+        if (staticMount) this.serviceMounts.set(serviceId!, mount);
 
         return mount;
+    }
+
+    static resolve<R = any>(
+        serviceInstance: ServiceInstance<any>,
+        field: string | symbol,
+        params: any[] = []
+    ): R {
+        const val = (serviceInstance as any)?.[field];
+        if (typeof val === "function") {
+            return val(...params);
+        } else return val;
+    }
+
+    static invoke<R = any>(serviceInstance: ServiceInstance<any>, field: string, params: any[] = []): R {
+        return this.resolve(serviceInstance, field, params);
+    }
+
+    /**
+     * Creates a non static service instance
+     */
+    static async create<S>(service: ServiceCtr<S>): Promise<S> {
+        const instance = await this.mountService(service, false);
+        return instance;
     }
 }

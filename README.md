@@ -1,3 +1,3 @@
 # njses
 
-Node.js Enterprise Standard
+Node.js Enterprise Scout

@@ -2,11 +2,14 @@
     "name": "njses",
     "version": "0.0.1",
     "description": "",
-    "main": "dist/index.js",
+    "main": "index.ts",
     "scripts": {
-        "build": "tsc",
+        "build": "npm run tc && tsc",
         "tc": "tsc --noEmit"
     },
     "author": "André Thomas",
-    "license": "ISC"
+    "license": "ISC",
+    "devDependencies": {
+        "@types/node": "^20.14.9"
+    }
 }

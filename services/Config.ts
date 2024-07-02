@@ -1,4 +1,6 @@
-import { Service } from "../decorators";
+import { Init, Service, Use } from "../decorators";
+import { ServiceInstance } from "../service-registery";
+import { Store } from "./Store";
 
 @Service({ name: "$Config" })
 export class Config {
@@ -6,8 +8,17 @@ export class Config {
 
     private _map: Map<string, any> = new Map();
 
-    set(key: string, value: any) {
+    @Use(Store)
+    private _storeService!: Store;
+
+    async set(key: string, value: any, store = false) {
         this._map.set(key, value);
+        if (store && this._store) await this._storeService.set(this._store, key, value);
+    }
+
+    setSync(key: string, value: any, store = false) {
+        this._map.set(key, value);
+        if (store && this._store) this._storeService.set(this._store, key, value);
     }
 
     /**
@@ -19,11 +30,38 @@ export class Config {
         return value;
     }
 
-    // TODO
+    /**
+     * @throws Error if value is not parseable to a number
+     */
+    getNum(key: string, required = false): number {
+        const num = Number(this.get(key, required));
+        if (isNaN(num)) throw new Error(`Config for "${key}" is not a number.`);
+        return num;
+    }
 
-    async createStore() {}
+    /**
+     * @returns true if value is "true", 1, "1", or true
+     */
+    getBool(key: string, required = false): boolean {
+        const num = this.get(key, required);
+        return num === true || num === 1 || num === "true" || num === "1";
+    }
 
-    async save() {}
+    @Init
+    loadEnv() {
+        for (const key in process.env) {
+            this.set(key, process.env[key]);
+        }
+    }
 
-    async retrieve() {}
+    private _store: any;
+
+    async setStore(storesService: ServiceInstance) {
+        this._store = storesService;
+        const all = await this._storeService.getAll(this._store);
+    }
+
+    get store() {
+        return this._store;
+    }
 }
