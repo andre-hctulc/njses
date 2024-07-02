@@ -1,20 +1,22 @@
 import { Service } from "../decorators";
 import { Shadow } from "../shadow";
 
-type LogSeverity = "all" | "verbose" | "silent" | "important";
+type LogLevel = "all" | "verbose" | "silent" | "important";
 
-@Service({ name: "$Logger" })
+@Service({ name: "$$Logger" })
 export class Logger {
-    /** `process.env.NJSES_LOGS || (process.env.development === "development" ? "verbose" : "important")` */
-    readonly severity: LogSeverity = (process.env.development === "development"
+    private _level: LogLevel = (process.env.development === "development"
         ? "verbose"
-        : "important") as LogSeverity;
+        : "important") as LogLevel;
 
-    constructor() {
-        if (process.env.NJSES_LOGS) {
-            if (["all", "verbose", "silent", "important"].includes(process.env.NJSES_LOGS as string))
-                this.severity = process.env.NJSES_LOGS as LogSeverity;
-        }
+    constructor() {}
+
+    setLevel(level: LogLevel) {
+        this._level = level;
+    }
+
+    get level() {
+        return this._level;
     }
 
     private _message(messages: any[]): any[] {
@@ -30,28 +32,28 @@ export class Logger {
         return [...labels, ...messages];
     }
 
-    severeLog(severity: Exclude<LogSeverity, "silent">, ...messages: any) {
-        if (this._severityMatches(severity)) return console.log(...this._message(messages));
+    levelLog(level: Exclude<LogLevel, "silent">, ...messages: any) {
+        if (this._levelMatches(level)) return console.log(...this._message(messages));
     }
 
-    severeError(severity: Exclude<LogSeverity, "silent">, ...messages: any) {
-        if (this._severityMatches(severity)) return console.error(...this._message(messages));
+    levelError(level: Exclude<LogLevel, "silent">, ...messages: any) {
+        if (this._levelMatches(level)) return console.error(...this._message(messages));
     }
 
-    severeWarn(severity: Exclude<LogSeverity, "silent">, ...messages: any) {
-        if (this._severityMatches(severity)) return console.warn(...this._message(messages));
+    levelWarn(level: Exclude<LogLevel, "silent">, ...messages: any) {
+        if (this._levelMatches(level)) return console.warn(...this._message(messages));
     }
 
     log(...messages: any) {
-        this.severeLog("important", ...messages);
+        this.levelLog("important", ...messages);
     }
 
     error(...messages: any) {
-        this.severeError("important", ...messages);
+        this.levelError("important", ...messages);
     }
 
     warn(...messages: any) {
-        this.severeWarn("important", ...messages);
+        this.levelWarn("important", ...messages);
     }
 
     devLog(...messages: any) {
@@ -69,11 +71,10 @@ export class Logger {
         this.warn(...messages);
     }
 
-    private _severityMatches(severity: Exclude<LogSeverity, "silent">) {
-        if (this.severity === "all") return true;
-        if (severity === "verbose" && this.severity === "verbose") return true;
-        if (severity === "important" && (this.severity === "important" || this.severity === "verbose"))
-            return true;
+    private _levelMatches(level: Exclude<LogLevel, "silent">) {
+        if (this.level === "all") return true;
+        if (level === "verbose" && this.level === "verbose") return true;
+        if (level === "important" && (this.level === "important" || this.level === "verbose")) return true;
         return false;
     }
 }

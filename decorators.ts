@@ -7,7 +7,7 @@ import { FIELD_NAME } from "./system";
  * Modules are Services that bundle dependencies and side effects.
  * @class_decorator
  */
-export function Module<U extends ServiceCollectionInterface>(init: ModuleInit<U>) {
+export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleInit<U>) {
     return function (service: ServiceCtr) {
         // register as service
         Service({ name: init.name })(service);
@@ -144,10 +144,10 @@ export function Init(target: any, propertyKey: string, descriptor: PropertyDescr
 
 /**
  * Marks the decorated method as configurer. Configurers are executed before any dependencies are initialized.
- * The decorated method receives the config service instance as argument.
- * 
+ * The decorated method receives the default module instance as argument.
+ *
  * Can be used to define configurations for other services.
- * 
+ *
  * @method_decorator
  */
 export function Configure(target: any, propertyKey: string, descriptor: PropertyDescriptor) {

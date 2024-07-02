@@ -1,8 +1,8 @@
 import { Service, Use } from "../decorators";
 import type { ServiceInstance } from "../service-registery";
-import { Store } from "./Store";
+import { Store } from "./store";
 
-@Service({ name: "$Config" })
+@Service({ name: "$$Config" })
 export class Config {
     readonly NODE_ENV = process.env.NODE_ENV || "";
 

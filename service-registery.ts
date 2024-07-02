@@ -1,4 +1,4 @@
-import { Config } from "./services/Config";
+import { DefaultModule } from "./services/default-module";
 import { Shadow } from "./shadow";
 import { FIELD_NAME } from "./system";
 
@@ -63,22 +63,16 @@ export abstract class ServiceRegistery {
         return shadow.id;
     }
 
-    /** Mounts default services like `Config` */
-    private static async mountDefaultsServices() {
-        const defaultServices = [Config];
-        await Promise.all(
-            defaultServices.map(async (defaultService) => {
-                await this.register(defaultService, true);
-                await this.mountService(defaultService);
-            })
-        );
+    private static async mountDefaultsModule() {
+        /** initilizes default services */
+        return await this.mountService(DefaultModule);
     }
 
     /**
      * @param staticMount If true, a registered service instance is used. If false, a new instance is created.
      */
     static async mountService(service: ServiceCtr, staticMount = true): Promise<any> {
-        await this.mountDefaultsServices();
+        const defaultModule = await this.mountDefaultsModule();
 
         let instance: any = this.getInstanceByCtr(service);
         let serviceId: string | undefined;
@@ -112,9 +106,8 @@ export abstract class ServiceRegistery {
 
             try {
                 // 0. Call configurers
-                const config = this.getInstanceByCtr(Config);
                 for (const conf of Shadow.getMethods(instance, FIELD_NAME.CONFIGURE)) {
-                    await this.invoke(instance, conf, [config]);
+                    await this.invoke(instance, conf, [defaultModule]);
                 }
 
                 // 1. initialize side effects
