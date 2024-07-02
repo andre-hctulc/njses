@@ -4,6 +4,7 @@ export function randomId() {
 
 export enum FIELD_NAME {
     INIT = "$$init",
+    CONFIGURE = "$$configure",
     MOUNT = "$$mount",
     STORE_GET = "$$store_get",
     STORE_SET = "$$store_set",

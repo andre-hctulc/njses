@@ -248,7 +248,7 @@ export abstract class Shadow {
 
     static getFields(service: any, type: string): Field[] {
         const shadow = this.get(service, true);
-        return Array.from(shadow.fields[type]);
+        return Array.from(shadow.fields[type] || []);
     }
 
     static getField<R extends boolean = false>(
@@ -271,7 +271,7 @@ export abstract class Shadow {
 
     static getMethods(service: any, type: string): string[] {
         const shadow = this.get(service, true);
-        return Array.from(shadow.methods[type]);
+        return Array.from(shadow.methods[type] || []);
     }
 
     static getMethod<R extends boolean = false>(

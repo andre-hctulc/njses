@@ -143,6 +143,18 @@ export function Init(target: any, propertyKey: string, descriptor: PropertyDescr
 }
 
 /**
+ * Marks the decorated method as configurer. Configurers are executed before any dependencies are initialized.
+ * The decorated method receives the config service instance as argument.
+ * 
+ * Can be used to define configurations for other services.
+ * 
+ * @method_decorator
+ */
+export function Configure(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.CONFIGURE, propertyKey);
+}
+
+/**
  * @method_decorator
  */
 export function Subscription(interval: number) {

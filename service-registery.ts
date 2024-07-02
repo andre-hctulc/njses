@@ -1,3 +1,4 @@
+import { Config } from "./services/Config";
 import { Shadow } from "./shadow";
 import { FIELD_NAME } from "./system";
 
@@ -62,10 +63,23 @@ export abstract class ServiceRegistery {
         return shadow.id;
     }
 
+    /** Mounts default services like `Config` */
+    private static async mountDefaultsServices() {
+        const defaultServices = [Config];
+        await Promise.all(
+            defaultServices.map(async (defaultService) => {
+                await this.register(defaultService, true);
+                await this.mountService(defaultService);
+            })
+        );
+    }
+
     /**
      * @param staticMount If true, a registered service instance is used. If false, a new instance is created.
      */
     static async mountService(service: ServiceCtr, staticMount = true): Promise<any> {
+        await this.mountDefaultsServices();
+
         let instance: any = this.getInstanceByCtr(service);
         let serviceId: string | undefined;
 
@@ -97,6 +111,12 @@ export abstract class ServiceRegistery {
             };
 
             try {
+                // 0. Call configurers
+                const config = this.getInstanceByCtr(Config);
+                for (const conf of Shadow.getMethods(instance, FIELD_NAME.CONFIGURE)) {
+                    await this.invoke(instance, conf, [config]);
+                }
+
                 // 1. initialize side effects
                 for (const sideEffect of Shadow.getSideEffects(instance)) {
                     await this.mountService(sideEffect);
@@ -115,7 +135,7 @@ export abstract class ServiceRegistery {
                             if (!Array.isArray(params)) params = [params];
                         }
 
-                        await this.resolve(mountedFactory, factoryMethod, [service, ...params]);
+                        await this.invoke(mountedFactory, factoryMethod, [service, ...params]);
                     }
                 }
 
@@ -132,13 +152,13 @@ export abstract class ServiceRegistery {
 
                 // 4. call initializers
                 for (const iniMethod of Shadow.getMethods(instance, FIELD_NAME.INIT)) {
-                    await this.resolve(instance, iniMethod);
+                    await this.invoke(instance, iniMethod);
                 }
 
                 // 5. call mounts
                 for (const mountMethod of Shadow.getMethods(instance, FIELD_NAME.MOUNT)) {
                     // do not await!
-                    this.resolve(instance, mountMethod);
+                    this.invoke(instance, mountMethod);
                 }
 
                 resolve(instance);
