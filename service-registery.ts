@@ -1,6 +1,6 @@
-import { DefaultModule } from "./services/default-module";
-import { Shadow } from "./shadow";
+import { ServiceShadow, Shadow } from "./shadow";
 import { FIELD_NAME } from "./system";
+import { DefaultModule } from "./services/default-module";
 
 export type ServiceCtr<S = any> = new () => S;
 export type ServiceInstance<S = any> = S extends new () => infer I ? I : any;
@@ -15,20 +15,52 @@ export type Injection<U extends Usable> = U extends Record<string, ServiceCtr<an
       }
     : ServiceInstance<U>;
 
+/** Mounts the given service(s) */
+export async function use<U extends Usable>(usable: U): Promise<Injection<U>> {
+    return await ServiceRegistery.inject(usable);
+}
+
+/** Returns mounted service(s) */
+export function useSync<U extends Usable>(usable: U): Injection<U> {
+    let instance: ServiceInstance;
+    let shadow: ServiceShadow;
+
+    const err = (name: string) => {
+        throw new Error(`Service "${name}" not mounted`);
+    };
+
+    if (typeof usable === "function") {
+        shadow = Shadow.get(usable, true);
+        instance = ServiceRegistery.getInstanceByCtr(usable);
+        if (!instance) err(shadow.name);
+        return instance;
+    } else {
+        const result: any = {};
+        for (const key in usable) {
+            instance = ServiceRegistery.getInstanceByCtr(usable[key] as ServiceCtr);
+            shadow = Shadow.get(instance, true);
+            if (!instance) err(shadow.name);
+            result[key] = instance;
+        }
+        return result;
+    }
+}
+
 export abstract class ServiceRegistery {
     private static services: Map<string, ServiceCtr> = new Map();
     private static servicesReverse: Map<ServiceCtr, string> = new Map();
     private static serviceMounts: Map<string, Promise<ServiceInstance>> = new Map();
     private static serviceInstances: Map<string, ServiceInstance> = new Map();
 
-    static async inject<U extends Usable>(service: U): Promise<Injection<U>> {
-        if (typeof service === "function") {
-            const instance = await this.mountService(service);
+    /** Mounts the given service(s) */
+    static async inject<U extends Usable>(usable: U): Promise<Injection<U>> {
+        if (typeof usable === "function") {
+            const instance = await this.mountService(usable);
             return instance as any;
         } else {
             const result: any = {};
-            for (const key in service) {
-                const s = service[key];
+            for (const key in usable) {
+                const s = usable[key];
                 const inst = await this.inject(s as any);
                 result[key] = inst;
             }
@@ -55,6 +87,7 @@ export abstract class ServiceRegistery {
     }
 
     static register(service: ServiceCtr, eager = false): string {
+        if (this.servicesReverse.has(service)) return this.servicesReverse.get(service)!;
         const shadow = Shadow.get(service, true);
         this.services.set(shadow.id, service);
         this.servicesReverse.set(service, shadow.id);
@@ -63,7 +96,8 @@ export abstract class ServiceRegistery {
         return shadow.id;
     }
 
-    private static async mountDefaultsModule() {
+    private static async mountDefaultModule() {
+        this.register(DefaultModule);
         /** initilizes default services */
         return await this.mountService(DefaultModule);
     }
@@ -72,7 +106,8 @@ export abstract class ServiceRegistery {
      * @param staticMount If true, a registered service instance is used. If false, a new instance is created.
      */
     static async mountService(service: ServiceCtr, staticMount = true): Promise<any> {
-        const defaultModule = await this.mountDefaultsModule();
+        // mount default module first
+        const defaultModule = await this.mountDefaultModule();
 
         let instance: any = this.getInstanceByCtr(service);
         let serviceId: string | undefined;
@@ -107,6 +142,8 @@ export abstract class ServiceRegistery {
             try {
                 // 0. Call configurers
                 for (const conf of Shadow.getMethods(instance, FIELD_NAME.CONFIGURE)) {
+                    // We pass the default module as arg, because injections are not available yet.
+                    // So we provide the default module for configuration purposes.
                     await this.invoke(instance, conf, [defaultModule]);
                 }
 

@@ -1,6 +1,12 @@
 import type { ModuleInit } from "./modules";
-import { ServiceCtr, ServiceRegistery, Usable, ServiceCollectionInterface } from "./service-registery";
-import { ShadowInit, Shadow } from "./shadow";
+import {
+    ServiceCtr,
+    ServiceRegistery,
+    Usable,
+    ServiceCollectionInterface,
+    ServiceInstance,
+} from "./service-registery";
+import { ShadowInit, Shadow, ShadowParam } from "./shadow";
 import { FIELD_NAME } from "./system";
 
 /**
@@ -34,7 +40,7 @@ export function Service<S>(init: ShadowInit = {}) {
  * Executes the decorated method after the service is initialized.
  * @method_decorator
  */
-export function Mount(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function Mount(target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.MOUNT, propertyKey);
 }
 
@@ -44,7 +50,7 @@ export function Mount(target: any, propertyKey: string, descriptor: PropertyDesc
  * @prop_decorator
  */
 export function Use<U extends Usable>(usable: U) {
-    return function (target: any, propertyKey: string | symbol) {
+    return function (target: ServiceInstance, propertyKey: string | symbol) {
         Shadow.addDep(target, propertyKey, usable);
     };
 }
@@ -54,9 +60,9 @@ export function Use<U extends Usable>(usable: U) {
  * @method_decorator
  */
 export function On<A extends [...any] = []>(emitter: ServiceCtr, eventType: string) {
-    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    return function (target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.on(emitter, eventType, function (...args: any[]) {
-            const listenerInstance = ServiceRegistery.getInstance(target);
+            const listenerInstance = ServiceRegistery.getInstanceByCtr(target);
             if (listenerInstance) ServiceRegistery.resolve(target, propertyKey, args);
         });
     };
@@ -68,7 +74,7 @@ export function On<A extends [...any] = []>(emitter: ServiceCtr, eventType: stri
  * @method_decorator
  */
 export function Emit<A extends [...any] = []>(eventType: string) {
-    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    return function (target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
         const originalMethod = descriptor.value;
 
         descriptor.value = function (...args: any[]) {
@@ -85,8 +91,40 @@ export function Emit<A extends [...any] = []>(eventType: string) {
  * The factory receive the service instance and possible parameters (`FactoryParams`) to extend the instance.
  * @method_decorator
  */
-export function Factory<P = any>(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function Factory<P = any>(
+    target: ServiceInstance,
+    propertyKey: string,
+    descriptor: PropertyDescriptor
+) {
     Shadow.addMethod(target, FIELD_NAME.FACTORY, propertyKey);
+}
+
+/**
+ * Maps input args to new args.
+ * @method_decorator
+ */
+export function MapArgs<I extends [...any], O extends [...any]>(
+    mapArgs:
+        | ((args: I, paramsShadow: ShadowParam | null) => O)
+        | { mapEachArg: (arg: I[number], paramShadow: ShadowParam | null, args: I) => O }
+) {
+    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+        const originalMethod = descriptor.value;
+
+        descriptor.value = function (...args: any[]) {
+            let newArgs: O;
+            const paramsShadow = Shadow.getParams(target, propertyKey) || {};
+
+            if (typeof mapArgs === "function") {
+                newArgs = mapArgs(args as I, paramsShadow);
+            } else {
+                newArgs = args.map((arg, i) => {
+                    return mapArgs.mapEachArg(arg, paramsShadow[i], args as I) || null;
+                }) as O;
+            }
+            return originalMethod.apply(this, newArgs);
+        };
+    };
 }
 
 /**
@@ -95,7 +133,7 @@ export function Factory<P = any>(target: any, propertyKey: string, descriptor: P
  * @prop_decorator
  */
 export function ProductParams<F = any>(factory: ServiceCtr<F>) {
-    return function (target: any, propertyKey: string | symbol) {
+    return function (target: ServiceInstance, propertyKey: string | symbol) {
         Shadow.update(target, (shadow) => {
             Shadow.setProductParam(factory, target, propertyKey);
         });
@@ -107,7 +145,7 @@ export function ProductParams<F = any>(factory: ServiceCtr<F>) {
  * @method_decorator
  */
 export function Product<F = any>(factory: ServiceCtr<F>) {
-    return function (target: any) {
+    return function (target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.update(target, (shadow) => {
             Shadow.addFactory(factory, target);
         });
@@ -138,7 +176,7 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
  * Marks the decorated method as initializer.
  * @method_decorator
  */
-export function Init(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function Init(target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.INIT, propertyKey);
 }
 
@@ -150,7 +188,7 @@ export function Init(target: any, propertyKey: string, descriptor: PropertyDescr
  *
  * @method_decorator
  */
-export function Configure(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function Configure(target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.CONFIGURE, propertyKey);
 }
 
@@ -158,7 +196,7 @@ export function Configure(target: any, propertyKey: string, descriptor: Property
  * @method_decorator
  */
 export function Subscription(interval: number) {
-    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+    return function (target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
         setInterval(() => {
             const originalMethod = descriptor.value;
             originalMethod.apply(target);
@@ -254,24 +292,29 @@ export function Freeze(copy = false) {
     };
 }
 
+// Apply map params //TODO
+export function Flush() {}
+
+export function MapParam() {}
+
 /**
  * @method_decorator
  */
-export function StoreGet(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function StoreGet(target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.STORE_SET, propertyKey);
 }
 
 /**
  * @method_decorator
  */
-export function StoreSet(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function StoreSet(target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.STORE_GET, propertyKey);
 }
 
 /**
  * @method_decorator
  */
-export function StoreGetAll(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function StoreGetAll(target: ServiceInstance, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.STORE_GET_ALL, propertyKey);
 }
 
@@ -291,26 +334,24 @@ export function Val<V>(validate?: (value: V) => V) {
     ) {
         // If parameter: register parameter validation
         if (typeof paramIndexOrDecorator === "number") {
-            Shadow.addParamData(target, propertyKey, paramIndexOrDecorator, { _validate: validate });
+            Shadow.addParam(target, propertyKey, paramIndexOrDecorator, { _validate: validate });
         }
         // If function: validate args
         else {
-            const originalMethod = paramIndexOrDecorator.value;
-            paramIndexOrDecorator.value = function (...args: any[]) {
-                const validatedParams = Shadow.mapArgs(target, propertyKey, args, (i, arg, data) => {
+            return MapArgs({
+                mapEachArg: (arg, param) => {
                     // Use param based validate (if given)
-                    if (data?._validate) {
-                        return data._validate(args[i]);
+                    if (param?._validate) {
+                        return param._validate(arg);
                     }
                     // use function based validate (if given) to validate all parameters
                     else if (validate) {
-                        return validate(args[i]);
+                        return validate(arg);
                     }
 
                     return arg;
-                });
-                return originalMethod.apply(this, validatedParams);
-            };
+                },
+            })(target, propertyKey as string, paramIndexOrDecorator);
         }
     };
 }

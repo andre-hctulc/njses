@@ -15,7 +15,7 @@ export class Config {
     /**
      * @param required checks for null or undefined
      */
-    get<T = any>(key: string, required = false): T {
+    get<T = any>(key: string, required = false): T | undefined {
         const value = this._mem.get(key);
         if (required && value == null) throw new Error(`Config for "${key}" is required but not set.`);
         return value;
@@ -24,17 +24,20 @@ export class Config {
     /**
      * @throws Error if value is not parseable to a number
      */
-    getNum(key: string, required = false): number {
-        const num = Number(this.get(key, required));
+    getNum(key: string, required = false): number | undefined {
+        const stored = this.get(key, required);
+        if (stored === undefined) return undefined;
+        const num = Number(stored);
         if (isNaN(num)) throw new Error(`Config for "${key}" is not a number.`);
         return num;
     }
 
     /**
-     * @returns true if value is true, "true", "TRUE", 1, or "1"
+     * @returns true if value is true, "true", "TRUE", 1, or "1", undefined if not found, false otherwise
      */
-    getBool(key: string, required = false): boolean {
+    getBool(key: string, required = false): boolean | undefined {
         const num = this.get(key, required);
+        if (num === undefined) return undefined;
         return num === true || num === 1 || num === "true" || num === "TRUE" || num === "1";
     }
 

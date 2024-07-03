@@ -72,8 +72,9 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     listeners: Record<string, Set<ServiceEventListener<any>>>;
 }
 
-export type ShadowPropData = ServiceShadow["props"][string];
-export type ShadowParamData = ShadowPropData["params"][number];
+/** Method or Field */
+export type ShadowProp = ServiceShadow["props"][string];
+export type ShadowParam = ShadowProp["params"][number];
 export type ShadowInit = ServiceShadow["init"];
 
 export type ServiceEventListener<A extends [...any] = []> = (this: ServiceInstance<any>, ...args: A) => void;
@@ -163,48 +164,39 @@ export abstract class Shadow {
         return shadow.ctx[key];
     }
 
-    static getPropData(service: any, propertyKey: string | symbol): ShadowPropData | null {
+    static getProp(service: any, propertyKey: Field): ShadowProp | null {
         const shadow = this.get(service, true);
         return shadow.props[propertyKey];
     }
 
-    static hasProp(service: any, propertyKey: string | symbol): boolean {
+    static hasProp(service: any, propertyKey: Field): boolean {
         const shadow = this.get(service, true);
         return !!shadow.props[propertyKey];
     }
 
-    static getParamData(
-        service: any,
-        propertyKey: string | symbol,
-        paramIndex: number
-    ): ShadowParamData | null {
+    static getParam(service: any, propertyKey: Field, paramIndex: number): ShadowParam | null {
         const shadow = this.get(service, true);
         return shadow.props[propertyKey]?.params[paramIndex] || null;
     }
 
-    static getParams(service: any, propertyKey: string | symbol): ShadowPropData["params"] | null {
-        const prop = this.getPropData(service, propertyKey);
+    static getParams(service: any, propertyKey: Field): ShadowProp["params"] | null {
+        const prop = this.getProp(service, propertyKey);
         return prop?.params || null;
     }
 
-    static addPropData(service: any, propertyKey: string | symbol, data: Partial<ShadowPropData>) {
+    static addProp(service: any, propertyKey: Field, data: Partial<ShadowProp>) {
         this.update(service, (sys) => {
             sys.props[propertyKey] = {
                 field: propertyKey as string,
                 method: false,
-                ...(sys.props[propertyKey] as Partial<ShadowPropData>),
+                ...(sys.props[propertyKey] as Partial<ShadowProp>),
                 ...data,
                 params: { ...sys.props[propertyKey]?.params, ...data.params },
             };
         });
     }
 
-    static addParamData(
-        service: any,
-        propertyKey: string | symbol,
-        paramIndex: number,
-        data: ShadowParamData
-    ) {
+    static addParam(service: any, propertyKey: Field, paramIndex: number, data: ShadowParam) {
         this.update(service, (sys) => {
             if (!sys.props[propertyKey])
                 sys.props[propertyKey] = { field: propertyKey, params: {}, method: true };
@@ -217,24 +209,25 @@ export abstract class Shadow {
 
     static forEachArg(
         service: any,
-        propertyKey: string | symbol,
+        propertyKey: Field,
         args: any[],
-        callback: (index: number, arg: any, paramData: ShadowParamData | null) => void
+        callback: (arg: any, param: ShadowParam | null, index: number) => void
     ) {
         this.mapArgs(service, propertyKey, args, callback);
     }
 
-    static mapArgs<T>(
+    static mapArgs<I extends [...any], O extends [...any]>(
         service: any,
-        propertyKey: string | symbol,
-        args: any[],
-        callback: (index: number, arg: any, paramData: ShadowParamData | null) => T
-    ): T[] {
-        const mapped: T[] = [...args];
+        propertyKey: Field,
+        args: I,
+        callback: (arg: any, param: ShadowParam | null, index: number) => O[number]
+    ): O {
+        const mapped: O = [] as any;
+        const params = this.getParams(service, propertyKey) || {};
         for (let i = 0; i < args.length; i++) {
             const arg = args[i];
-            const data = this.getParamData(service, propertyKey, i);
-            if (data) mapped.push(callback(i, arg, data));
+            const param = params[i] || null;
+            mapped.push(callback(arg, param, i));
         }
         return mapped;
     }
