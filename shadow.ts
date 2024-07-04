@@ -1,4 +1,10 @@
-import type { DefaultServiceInit, ServiceCtr, ServiceInstance, Usable } from "./service-registery";
+import type {
+    DefaultServiceInit,
+    ServiceCtr,
+    ServiceInstance,
+    StaticServiceCtr,
+    Usable,
+} from "./service-registery";
 import { randomId } from "./system";
 
 /** Property or Method */
@@ -45,9 +51,9 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     /** <factory, field/method>  */
     productParams: Map<ServiceCtr, Field>;
     /** prerequisites that do not need to be injected  */
-    sideEffects: Set<ServiceCtr>;
-    /** `<field, serviceId>` */
-    deps: Record<Field, Usable>;
+    sideEffects: Set<StaticServiceCtr<any>>;
+    /** `<field, usable+params>` */
+    deps: Record<Field, { usable: Usable; params: [...any] }>;
     /** Define some context */
     ctx: Record<string, any>;
     /** Stores data for each prop (field or method) and it's params */
@@ -95,6 +101,11 @@ const proto = (service: any) => {
 };
 
 export abstract class Shadow {
+    static isDynamic(service: any): boolean {
+        const shadow = this.get(service, true);
+        return !!shadow.init.dynamic;
+    }
+
     /**
      * Retrieves the shadow of the given service
      * @param service Can be a service class, instance or prototype
@@ -136,18 +147,18 @@ export abstract class Shadow {
         return shadow;
     }
 
-    static addDep(service: any, field: Field, dep: Usable): void {
+    static addDep(service: any, field: Field, dep: Usable, params: [...any]): void {
         this.update(service, (sys) => {
-            sys.deps[field] = dep;
+            sys.deps[field] = { usable: dep, params };
         });
     }
 
-    static getDeps(service: any): Record<string, Usable> {
+    static getDeps(service: any): Record<string, { usable: Usable; params: [...any] }> {
         const shadow = this.get(service, true);
         return shadow.deps;
     }
 
-    static getDep(service: any, field: string): Usable | null {
+    static getDep(service: any, field: string): { usable: Usable; params: [...any] } | null {
         const shadow = this.get(service, true);
         return shadow.deps[field] || null;
     }
@@ -290,6 +301,9 @@ export abstract class Shadow {
         return Array.from(shadow.methods[type] || []);
     }
 
+    /**
+     * @returns The _first_ method of the given type
+     */
     static getMethod<R extends boolean = false>(
         service: any,
         type: string,

@@ -5,6 +5,8 @@ import {
     Usable,
     ServiceCollectionInterface,
     ServicePrototype,
+    ServiceParams,
+    StaticServiceCtr,
 } from "./service-registery";
 import { ShadowInit, Shadow, ParamShadow } from "./shadow";
 import { FIELD_NAME } from "./system";
@@ -17,7 +19,7 @@ export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleIn
     return function (service: ServiceCtr) {
         // register as service
         Service({ name: init.name })(service);
-        Shadow.addDep(service, "d", init.deps || {});
+        Shadow.addDep(service, "d", init.deps || {}, []);
         if (init.sideEffects) Shadow.addSideEffect(service, ...init.sideEffects);
         if (init.roles) Shadow.addRoles(service, ...init.roles);
     };
@@ -32,8 +34,8 @@ export function Service<S>(init: ShadowInit = {}) {
         const shadow = Shadow.update(service, (shadow) => {
             shadow.name = init.name || shadow.name;
             shadow.namespace = init.namespace || "";
+            shadow.init = init;
         });
-        ServiceRegistery.register(service);
     };
 }
 
@@ -50,9 +52,12 @@ export function Mount(target: ServicePrototype, propertyKey: string, descriptor:
  * @method_decorator
  * @prop_decorator
  */
-export function Use<U extends Usable>(usable: U) {
+export function Use<U extends Usable>(
+    usable: U,
+    ...params: ServiceParams<U> extends never ? [] : ServiceParams<U>
+) {
     return function (target: ServicePrototype, propertyKey: string | symbol) {
-        Shadow.addDep(target, propertyKey, usable);
+        Shadow.addDep(target, propertyKey, usable, params);
     };
 }
 
@@ -60,10 +65,14 @@ export function Use<U extends Usable>(usable: U) {
  * The decorated method receives the event arguments as arguments.
  * @method_decorator
  */
-export function On<A extends [...any] = []>(emitter: ServiceCtr, eventType: string) {
+export function On<S extends ServiceCtr>(
+    emitter: S,
+    eventType: string,
+    ...params: ServiceParams<S> extends never ? [] : ServiceParams<S>
+) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.on(emitter, eventType, function (...args: any[]) {
-            const listenerInstance = ServiceRegistery.getInstanceByCtr(target);
+            const listenerInstance = ServiceRegistery.getInstance(target.constructor, params);
             if (listenerInstance) ServiceRegistery.resolve(target, propertyKey, args);
         });
     };
@@ -90,6 +99,8 @@ export function Emit<A extends [...any] = []>(eventType: string) {
 /**
  * Factories are used to create instances of a service, called products. Factory methods are applied to the service instance.
  * The factory receive the service instance and possible parameters (`FactoryParams`) to extend the instance.
+ *
+ * Factories must be static!
  * @method_decorator
  */
 export function Factory<P = any>(
@@ -152,7 +163,7 @@ export function Flush<I extends [...any], O extends [...any]>(
  * @method_decorator
  * @prop_decorator
  */
-export function ProductParams<F = any>(factory: ServiceCtr<F>) {
+export function ProductParams<F = any>(factory: StaticServiceCtr<F>) {
     return function (target: ServicePrototype, propertyKey: string | symbol) {
         Shadow.update(target, (shadow) => {
             Shadow.setProductParam(factory, target, propertyKey);
@@ -164,7 +175,7 @@ export function ProductParams<F = any>(factory: ServiceCtr<F>) {
  * Passes as parameters to factory methods. You must return an array of parameters.
  * @method_decorator
  */
-export function Product<F = any>(factory: ServiceCtr<F>) {
+export function Product<F = any>(factory: StaticServiceCtr<F>) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.update(target, (shadow) => {
             Shadow.addFactory(factory, target);
@@ -359,7 +370,7 @@ export function Val<V>(validate?: (value: V) => V) {
         }
         // If function: validate args
         else {
-            return Flush()(target, propertyKey, paramIndexOrDecorator);
+            Flush()(target, propertyKey, paramIndexOrDecorator);
         }
     };
 }

@@ -1,10 +1,10 @@
-import type { ServiceCollection, ServiceCollectionInterface, ServiceCtr } from "./service-registery";
+import type { ServiceCollection, ServiceCollectionInterface, StaticServiceCtr } from "./service-registery";
 
 export const MODULE_DEPS_FIELD = "d";
 
 export type ModuleInit<D extends ServiceCollectionInterface> = {
     name?: string;
-    sideEffects?: ServiceCtr[];
+    sideEffects?: StaticServiceCtr[];
     roles?: string[];
 } & (keyof D extends never ? { deps?: ServiceCollection } : { deps: ServiceCollection<D> });
 
