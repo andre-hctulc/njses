@@ -121,7 +121,7 @@ export abstract class Shadow {
 
     /** Updates the shadow of the given service */
     static update(service: any, mutate: (sys: ServiceShadow) => ServiceShadow | void): ServiceShadow {
-        let shadow: undefined | ServiceShadow = proto(service)[SHADOW_SYMBOL];
+        let shadow: ServiceShadow = proto(service)[SHADOW_SYMBOL];
         // init shadow if not exists
         if (!shadow) {
             shadow = {
@@ -144,7 +144,7 @@ export abstract class Shadow {
         }
         shadow = mutate(shadow) || shadow;
         (service as any)[SHADOW_SYMBOL] = shadow;
-        return shadow;
+        return shadow as ServiceShadow;
     }
 
     static addDep(service: any, field: Field, dep: Usable, params: [...any]): void {
