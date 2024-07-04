@@ -1,13 +1,8 @@
-import type { ServiceCtr, ServiceInstance, Usable } from "./service-registery";
+import type { DefaultServiceInit, ServiceCtr, ServiceInstance, Usable } from "./service-registery";
 import { randomId } from "./system";
 
+/** Property or Method */
 type Field = string | symbol;
-
-export interface DefaultShadowInit {
-    eager?: boolean;
-    name?: string;
-    namespace?: string;
-}
 
 /**
  * Use module augmentation to extend this interface.
@@ -17,7 +12,7 @@ export interface CustomShadow {}
 /**
  * Use module augmentation to extend this interface.
  */
-export interface CustomShadowInit {}
+export interface CustomServiceInit {}
 
 /**
  * Use module augmentation to extend this interface.
@@ -29,13 +24,22 @@ export interface CustomShadowProp {}
  */
 export interface CustomShadowParam {}
 
+/** Method or Field */
+export type FieldShadow = ServiceShadow["fields"][string];
+export type ParamShadow = FieldShadow["params"][number];
+export type ShadowInit = ServiceShadow["init"];
+
 export interface ServiceShadow extends Partial<CustomShadow> {
     /** Service id */
     id: string;
     /** Service name */
     name: string;
+    /** Service name */
+    namespace: string;
+    /** List of roles */
+    roles: Set<string>;
     /** Service init */
-    init: DefaultShadowInit & Partial<CustomShadow>;
+    init: DefaultServiceInit & Partial<CustomServiceInit>;
     /** services (factories) */
     productOf: Set<ServiceCtr>;
     /** <factory, field/method>  */
@@ -47,7 +51,7 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     /** Define some context */
     ctx: Record<string, any>;
     /** Stores data for each prop (field or method) and it's params */
-    props: Record<
+    fields: Record<
         string | symbol,
         // default prop
         {
@@ -56,14 +60,14 @@ export interface ServiceShadow extends Partial<CustomShadow> {
                 number,
                 // default param
                 {
-                    _validate?: any;
+                    mapArg?: (arg: any, param: ParamShadow) => any;
                 } & Partial<CustomShadowParam>
             >;
             method: boolean;
         } & Partial<CustomShadowProp>
     >;
     /** <fieldType, fields> - Can be used to memorize special fields. e.g. options */
-    fields: Record<string, Set<Field>>;
+    props: Record<string, Set<Field>>;
     /** <methodType, methods> - Can be used to memorize special methods. e.g. initializers   */
     methods: Record<string, Set<string>>;
     /** Events */
@@ -71,11 +75,6 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     /** Registerd event listeners */
     listeners: Record<string, Set<ServiceEventListener<any>>>;
 }
-
-/** Method or Field */
-export type ShadowProp = ServiceShadow["props"][string];
-export type ShadowParam = ShadowProp["params"][number];
-export type ShadowInit = ServiceShadow["init"];
 
 export type ServiceEventListener<A extends [...any] = []> = (this: ServiceInstance<any>, ...args: A) => void;
 
@@ -86,38 +85,49 @@ export enum ServiceEvent {
     MOUNT = "$mount",
 }
 
+const proto = (service: any) => {
+    // Class ctr
+    if (typeof service === "function") return service.prototype;
+    // Instance
+    else if (service instanceof Object && service.prototype) return service.constructor.prototype;
+    // Prototype
+    else return service;
+};
+
 export abstract class Shadow {
-    /** Retrieves the shadow of the given service */
+    /**
+     * Retrieves the shadow of the given service
+     * @param service Can be a service class, instance or prototype
+     * */
     static get<R extends boolean = false>(
         service: any,
         required?: R
     ): R extends true ? ServiceShadow : ServiceShadow | null {
-        if (typeof service === "object") service = service.constructor;
-        const sys = (service as any)?.[SHADOW_SYMBOL];
+        const sys = proto(service)?.[SHADOW_SYMBOL];
         if (required && !sys) throw new Error("Not a service");
         return sys || null;
     }
 
     /** Updates the shadow of the given service */
     static update(service: any, mutate: (sys: ServiceShadow) => ServiceShadow | void): ServiceShadow {
-        if (typeof service === "object") service = service?.constructor;
-        if (!service) throw new Error("Not a valid service base");
-        let shadow: undefined | ServiceShadow = (service as any)[SHADOW_SYMBOL];
+        let shadow: undefined | ServiceShadow = proto(service)[SHADOW_SYMBOL];
         // init shadow if not exists
         if (!shadow) {
             shadow = {
                 name: "",
+                namespace: "",
                 id: randomId(),
+                roles: new Set(),
                 deps: {},
                 productOf: new Set(),
                 productParams: new Map(),
                 events: {},
                 init: {} as any,
                 ctx: {},
-                props: {},
+                fields: {},
                 listeners: {},
                 sideEffects: new Set(),
-                fields: {},
+                props: {},
                 methods: {},
             };
         }
@@ -164,44 +174,49 @@ export abstract class Shadow {
         return shadow.ctx[key];
     }
 
-    static getProp(service: any, propertyKey: Field): ShadowProp | null {
+    static getField(service: any, propertyKey: Field): FieldShadow | null {
         const shadow = this.get(service, true);
-        return shadow.props[propertyKey];
+        return shadow.fields[propertyKey];
     }
 
-    static hasProp(service: any, propertyKey: Field): boolean {
+    static getFields(service: any): FieldShadow[] {
         const shadow = this.get(service, true);
-        return !!shadow.props[propertyKey];
+        return Object.values(shadow.fields);
     }
 
-    static getParam(service: any, propertyKey: Field, paramIndex: number): ShadowParam | null {
+    static hasField(service: any, propertyKey: Field): boolean {
         const shadow = this.get(service, true);
-        return shadow.props[propertyKey]?.params[paramIndex] || null;
+        return !!shadow.fields[propertyKey];
     }
 
-    static getParams(service: any, propertyKey: Field): ShadowProp["params"] | null {
-        const prop = this.getProp(service, propertyKey);
+    static getParam(service: any, propertyKey: Field, paramIndex: number): ParamShadow | null {
+        const shadow = this.get(service, true);
+        return shadow.fields[propertyKey]?.params[paramIndex] || null;
+    }
+
+    static getParams(service: any, propertyKey: Field): FieldShadow["params"] | null {
+        const prop = this.getField(service, propertyKey);
         return prop?.params || null;
     }
 
-    static addProp(service: any, propertyKey: Field, data: Partial<ShadowProp>) {
+    static addField(service: any, propertyKey: Field, data: Partial<FieldShadow>) {
         this.update(service, (sys) => {
-            sys.props[propertyKey] = {
+            sys.fields[propertyKey] = {
                 field: propertyKey as string,
                 method: false,
-                ...(sys.props[propertyKey] as Partial<ShadowProp>),
+                ...(sys.fields[propertyKey] as Partial<FieldShadow>),
                 ...data,
-                params: { ...sys.props[propertyKey]?.params, ...data.params },
+                params: { ...sys.fields[propertyKey]?.params, ...data.params },
             };
         });
     }
 
-    static addParam(service: any, propertyKey: Field, paramIndex: number, data: ShadowParam) {
+    static addParam(service: any, propertyKey: Field, paramIndex: number, data: ParamShadow) {
         this.update(service, (sys) => {
-            if (!sys.props[propertyKey])
-                sys.props[propertyKey] = { field: propertyKey, params: {}, method: true };
-            sys.props[propertyKey].params[paramIndex] = {
-                ...sys.props[propertyKey]?.params[paramIndex],
+            if (!sys.fields[propertyKey])
+                sys.fields[propertyKey] = { field: propertyKey, params: {}, method: true };
+            sys.fields[propertyKey].params[paramIndex] = {
+                ...sys.fields[propertyKey]?.params[paramIndex],
                 ...data,
             };
         });
@@ -211,20 +226,25 @@ export abstract class Shadow {
         service: any,
         propertyKey: Field,
         args: any[],
-        callback: (arg: any, param: ShadowParam | null, index: number) => void
+        callback: (arg: any, param: ParamShadow | null, index: number) => void
     ) {
         this.mapArgs(service, propertyKey, args, callback);
     }
 
+    /**
+     * Map over given arguments and their shadow.
+     */
     static mapArgs<I extends [...any], O extends [...any]>(
         service: any,
         propertyKey: Field,
         args: I,
-        callback: (arg: any, param: ShadowParam | null, index: number) => O[number]
+        callback: (arg: any, param: ParamShadow | null, index: number) => O[number]
     ): O {
         const mapped: O = [] as any;
         const params = this.getParams(service, propertyKey) || {};
-        for (let i = 0; i < args.length; i++) {
+        const len = Math.max(args.length, Object.keys(params).length);
+
+        for (let i = 0; i < len; i++) {
             const arg = args[i];
             const param = params[i] || null;
             mapped.push(callback(arg, param, i));
@@ -232,25 +252,28 @@ export abstract class Shadow {
         return mapped;
     }
 
-    static addField(service: any, type: string, field: Field) {
+    static addProp(service: any, type: string, field: Field) {
         this.update(service, (sys) => {
-            if (!sys.fields[type]) sys.fields[type] = new Set();
-            sys.fields[type].add(field);
+            if (!sys.props[type]) sys.props[type] = new Set();
+            sys.props[type].add(field);
         });
     }
 
-    static getFields(service: any, type: string): Field[] {
+    static getProps(service: any, type: string): Field[] {
         const shadow = this.get(service, true);
-        return Array.from(shadow.fields[type] || []);
+        return Array.from(shadow.props[type] || []);
     }
 
-    static getField<R extends boolean = false>(
+    /**
+     * @returns The _first_ property of the given type
+     */
+    static getProp<R extends boolean = false>(
         service: any,
         type: string,
         required?: R
     ): R extends true ? Field : Field | null {
         const shadow = this.get(service, true);
-        const first = shadow.fields[type].values().next().value;
+        const first = shadow.props[type].values().next().value;
         if (required && first == null) throw new Error(`No field of type "${type}"`);
         return first;
     }
@@ -314,5 +337,11 @@ export abstract class Shadow {
         if (!shadow.listeners[event]) shadow.listeners[event] = new Set();
         shadow.listeners[event].add(listener);
         return listener;
+    }
+
+    static addRoles(service: any, ...roles: string[]) {
+        this.update(service, (sys) => {
+            roles.forEach((role) => sys.roles.add(role));
+        });
     }
 }

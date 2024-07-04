@@ -2,8 +2,15 @@ import { ServiceShadow, Shadow } from "./shadow";
 import { FIELD_NAME } from "./system";
 import { DefaultModule } from "./services/default-module";
 
+export interface DefaultServiceInit {
+    eager?: boolean;
+    name?: string;
+    namespace?: string;
+}
+
 export type ServiceCtr<S = any> = new () => S;
 export type ServiceInstance<S = any> = S extends new () => infer I ? I : any;
+export type ServicePrototype = any;
 export type ServiceCollectionInterface = Record<string, any>;
 export type ServiceCollection<M extends ServiceCollectionInterface = any> = {
     [K in keyof M]: ServiceCtr<M[K]>;
@@ -51,6 +58,7 @@ export abstract class ServiceRegistery {
     private static servicesReverse: Map<ServiceCtr, string> = new Map();
     private static serviceMounts: Map<string, Promise<ServiceInstance>> = new Map();
     private static serviceInstances: Map<string, ServiceInstance> = new Map();
+    private static roles: Map<string, Set<string>> = new Map();
 
     /** Mounts the given service(s) */
     static async inject<U extends Usable>(usable: U): Promise<Injection<U>> {
@@ -86,14 +94,33 @@ export abstract class ServiceRegistery {
         return new service();
     }
 
+    static getAssignees(role: string): ServiceInstance[] {
+        const ids = Array.from(this.roles.get(role) || []);
+        return ids.map((id) => this.serviceInstances.get(id)!);
+    }
+
+    /**
+     * Registers the given service
+     * @param eager If true, the service is mounted immediately
+     */
     static register(service: ServiceCtr, eager = false): string {
         if (this.servicesReverse.has(service)) return this.servicesReverse.get(service)!;
-        const shadow = Shadow.get(service, true);
-        this.services.set(shadow.id, service);
-        this.servicesReverse.set(service, shadow.id);
-        this.serviceInstances.set(shadow.id, this.constructService(service));
+        const shadow = Shadow.get(service);
+        if (!shadow) throw new Error("Service not registered");
+        const id = shadow.id;
+        // remember in maps
+        this.services.set(id, service);
+        this.servicesReverse.set(service, id);
+        // construct and remember the service
+        this.serviceInstances.set(id, this.constructService(service));
+        // remember roles
+        for (const role of shadow.roles) {
+            if (!this.roles.has(role)) this.roles.set(role, new Set());
+            this.roles.get(role)!.add(id);
+        }
+        // mount service if eager
         if (eager) this.mountService(service);
-        return shadow.id;
+        return id;
     }
 
     private static async mountDefaultModule() {
@@ -103,16 +130,16 @@ export abstract class ServiceRegistery {
     }
 
     /**
-     * @param staticMount If true, a registered service instance is used. If false, a new instance is created.
+     * @param dynamic If true, a new service instance is created, otherwise a registered service instance is used.
      */
-    static async mountService(service: ServiceCtr, staticMount = true): Promise<any> {
+    static async mountService(service: ServiceCtr, dynamic = false): Promise<any> {
         // mount default module first
         const defaultModule = await this.mountDefaultModule();
 
         let instance: any = this.getInstanceByCtr(service);
         let serviceId: string | undefined;
 
-        if (staticMount) {
+        if (!dynamic) {
             serviceId = this.servicesReverse.get(service);
             instance = this.getInstance(serviceId!);
             if (!serviceId || !instance) throw new Error("Service not registered");
@@ -182,13 +209,13 @@ export abstract class ServiceRegistery {
 
                 // 4. call initializers
                 for (const iniMethod of Shadow.getMethods(instance, FIELD_NAME.INIT)) {
-                    await this.invoke(instance, iniMethod);
+                    await this.invoke(instance, iniMethod, []);
                 }
 
                 // 5. call mounts
                 for (const mountMethod of Shadow.getMethods(instance, FIELD_NAME.MOUNT)) {
                     // do not await!
-                    this.invoke(instance, mountMethod);
+                    this.invoke(instance, mountMethod, []);
                 }
 
                 resolve(instance);
@@ -198,7 +225,7 @@ export abstract class ServiceRegistery {
         });
 
         // if static mount, save the promise
-        if (staticMount) this.serviceMounts.set(serviceId!, mount);
+        if (!dynamic) this.serviceMounts.set(serviceId!, mount);
 
         return mount;
     }
@@ -214,7 +241,11 @@ export abstract class ServiceRegistery {
         } else return val;
     }
 
-    static invoke<R = any>(serviceInstance: ServiceInstance<any>, field: string, params: any[] = []): R {
+    static invoke<F extends (...args: any) => any>(
+        serviceInstance: ServiceInstance<any>,
+        field: string,
+        params: Parameters<F>
+    ): ReturnType<F> {
         return this.resolve(serviceInstance, field, params);
     }
 
@@ -222,7 +253,7 @@ export abstract class ServiceRegistery {
      * Creates a non static service instance
      */
     static async create<S>(service: ServiceCtr<S>): Promise<S> {
-        const instance = await this.mountService(service, false);
+        const instance = await this.mountService(service, true);
         return instance;
     }
 }

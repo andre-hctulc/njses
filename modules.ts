@@ -5,6 +5,7 @@ export const MODULE_DEPS_FIELD = "d";
 export type ModuleInit<D extends ServiceCollectionInterface> = {
     name?: string;
     sideEffects?: ServiceCtr[];
+    roles?: string[];
 } & (keyof D extends never ? { deps?: ServiceCollection } : { deps: ServiceCollection<D> });
 
 export interface ModuleInterface<U extends ServiceCollectionInterface> {
