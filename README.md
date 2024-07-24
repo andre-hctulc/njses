@@ -1,17 +1,6 @@
 # njses
 
-Node.js Enterprise Scout
-
-## TS Decorators
-
-### Instance Decorator Params
-
--   class: _Constructor_
--   method, prop, param: _Prototype_
-
-## TODO
-
--   check decorators that are called at runtime
+**Do not use this 🚑**
 
 ## Patterns
 
