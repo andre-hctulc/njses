@@ -10,4 +10,5 @@ export enum FIELD_NAME {
     STORE_SET = "$$store_set",
     STORE_GET_ALL = "$$store_get_all",
     FACTORY = "$$factory",
+    DESTROY = "$$destroy",
 }

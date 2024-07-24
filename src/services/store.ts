@@ -1,7 +1,7 @@
-import { Service } from "../decorators";
-import { ServiceRegistery } from "../service-registery";
+import { FIELD_NAME } from "../utils/system";
 import { Shadow } from "../shadow";
-import { FIELD_NAME } from "../system";
+import { ServiceRegistery } from "../service-registery";
+import { Service } from "../decorators";
 
 @Service({ name: "$Store" })
 export class Store {

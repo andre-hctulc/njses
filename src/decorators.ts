@@ -1,25 +1,24 @@
+import { FIELD_NAME } from "./utils/system";
 import type { ModuleInit } from "./modules";
 import {
     ServiceCtr,
     ServiceRegistery,
-    Usable,
+    Injectable,
     ServiceCollectionInterface,
     ServicePrototype,
     ServiceParams,
-    StaticServiceCtr,
+    ServiceInstance,
 } from "./service-registery";
 import { ShadowInit, Shadow, ParamShadow } from "./shadow";
-import { FIELD_NAME } from "./system";
 
 /**
  * Modules are Services that bundle dependencies and side effects.
  * @class_decorator
  */
-export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleInit<U>) {
+export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleInit) {
     return function (service: ServiceCtr) {
         // register as service
         Service({ name: init.name })(service);
-        Shadow.addDep(service, "d", init.deps || {}, []);
         if (init.sideEffects) Shadow.addSideEffect(service, ...init.sideEffects);
         if (init.roles) Shadow.addRoles(service, ...init.roles);
     };
@@ -29,18 +28,30 @@ export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleIn
  * Services are classes that are initialized once and can be injected into other services.
  * @class_decorator
  */
-export function Service<S>(init: ShadowInit = {}) {
+export function Service<S extends object>(init: ShadowInit = {}) {
     return function (service: ServiceCtr<S>) {
-        const shadow = Shadow.update(service, (shadow) => {
+        Shadow.update(service, (shadow) => {
             shadow.name = init.name || shadow.name;
             shadow.namespace = init.namespace || "";
-            shadow.init = init;
+            if (init) shadow.init = init;
         });
     };
 }
 
 /**
- * Executes the decorated method after the service is initialized.
+ * Services, that are initialized before the decorated service.
+ *
+ * **For now these services cannot have parameters!**
+ * @class_decorator
+ */
+export function SideEffects(...effects: ServiceCtr[]) {
+    return function (service: ServiceCtr) {
+        Shadow.addSideEffect(service, ...effects);
+    };
+}
+
+/**
+ * Executes the decorated method _after_ the service is initialized.
  * @method_decorator
  */
 export function Mount(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
@@ -48,16 +59,14 @@ export function Mount(target: ServicePrototype, propertyKey: string, descriptor:
 }
 
 /**
- * Passes as parameters to factory methods. You must return an array of parameters.
- * @method_decorator
+ * @template D Dependant
  * @prop_decorator
  */
-export function Use<U extends Usable>(
-    usable: U,
-    ...params: ServiceParams<U> extends never ? [] : ServiceParams<U>
+export function Inject<S extends ServiceCtr, D extends ServiceInstance | null = null>(
+    injectable: Injectable<S, D>
 ) {
     return function (target: ServicePrototype, propertyKey: string | symbol) {
-        Shadow.addDep(target, propertyKey, usable, params);
+        Shadow.addDep(target, propertyKey, injectable);
     };
 }
 
@@ -65,11 +74,7 @@ export function Use<U extends Usable>(
  * The decorated method receives the event arguments as arguments.
  * @method_decorator
  */
-export function On<S extends ServiceCtr>(
-    emitter: S,
-    eventType: string,
-    ...params: ServiceParams<S> extends never ? [] : ServiceParams<S>
-) {
+export function On<S extends ServiceCtr>(emitter: S, eventType: string, ...params: ServiceParams<S>) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.on(emitter, eventType, function (...args: any[]) {
             const listenerInstance = ServiceRegistery.getInstance(target.constructor, params);
@@ -146,40 +151,15 @@ export function Flush<I extends [...any], O extends [...any]>(
                     return mapArgs.mapEachArg(arg, paramsShadow[i], args as I) || null;
                 }) as O;
             }
-            // Use registerd arg mappers
+            // Use registered arg mappers
             else {
                 newArgs = args.map((arg, i) => {
-                    if (!paramsShadow[i].mapArg) return arg;
+                    if (!paramsShadow[i]?.mapArg) return arg;
                     return paramsShadow[i].mapArg(arg, paramsShadow[i]);
                 }) as O;
             }
             return originalMethod.apply(this, newArgs);
         };
-    };
-}
-
-/**
- * Passes as parameters to factory methods. You must return an array of parameters.
- * @method_decorator
- * @prop_decorator
- */
-export function ProductParams<F = any>(factory: StaticServiceCtr<F>) {
-    return function (target: ServicePrototype, propertyKey: string | symbol) {
-        Shadow.update(target, (shadow) => {
-            Shadow.setProductParam(factory, target, propertyKey);
-        });
-    };
-}
-
-/**
- * Passes as parameters to factory methods. You must return an array of parameters.
- * @method_decorator
- */
-export function Product<F = any>(factory: StaticServiceCtr<F>) {
-    return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-        Shadow.update(target, (shadow) => {
-            Shadow.addFactory(factory, target);
-        });
     };
 }
 
@@ -211,17 +191,17 @@ export function Init(target: ServicePrototype, propertyKey: string, descriptor: 
     Shadow.addMethod(target, FIELD_NAME.INIT, propertyKey);
 }
 
-/**
- * Marks the decorated method as configurer. Configurers are executed before any dependencies are initialized.
- * The decorated method receives the default module instance as argument.
- *
- * Can be used to define configurations for other services.
- *
- * @method_decorator
- */
-export function Configure(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.CONFIGURE, propertyKey);
-}
+// /**
+//  * Marks the decorated method as configurer. Configurers are executed before any dependencies are initialized.
+//  * The decorated method receives the default module instance as argument.
+//  *
+//  * Can be used to define configurations for other services.
+//  *
+//  * @method_decorator
+//  */
+// export function Configure(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+//     Shadow.addMethod(target, FIELD_NAME.CONFIGURE, propertyKey);
+// }
 
 /**
  * @method_decorator
@@ -333,6 +313,7 @@ export function Freeze(copy = false) {
 }
 
 /**
+ * Getter for a store.
  * @method_decorator
  */
 export function StoreGet(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
@@ -340,6 +321,7 @@ export function StoreGet(target: ServicePrototype, propertyKey: string, descript
 }
 
 /**
+ * Setter for a store.
  * @method_decorator
  */
 export function StoreSet(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
@@ -347,10 +329,19 @@ export function StoreSet(target: ServicePrototype, propertyKey: string, descript
 }
 
 /**
+ * All getter for a store.
  * @method_decorator
  */
 export function StoreGetAll(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.STORE_GET_ALL, propertyKey);
+}
+
+/**
+ * The decorated method is called when the service is destroyed.
+ * @method_decorator
+ */
+export function Destroy(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.DESTROY, propertyKey);
 }
 
 /**
@@ -398,7 +389,8 @@ Val.obj = (value: object) => {
         );
     return value;
 };
-
-class Test {}
-
-Test.prototype;
+Val.instof = (ctr: new (...args: any) => any) => (value: any) => {
+    if (!(value instanceof ctr))
+        throw new TypeError(`Parameter Validation Error: Expected an instance of ${ctr.name}`);
+    return value;
+};

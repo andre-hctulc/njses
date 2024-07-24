@@ -1,5 +1,5 @@
-import { Service, Use } from "../decorators";
 import type { ServiceInstance } from "../service-registery";
+import { Service, Inject } from "../decorators";
 import { Store } from "./store";
 
 @Service({ name: "$$Config" })
@@ -9,13 +9,13 @@ export class Config {
     /** memory Map */
     private _mem: Map<string, any> = new Map();
 
-    @Use(Store)
+    @Inject(Store)
     private _storeService!: Store;
 
     /**
      * @param required checks for null or undefined
      */
-    get<T = any>(key: string, required = false): T | undefined {
+    get<R extends boolean = false>(key: string, required?: R): any {
         const value = this._mem.get(key);
         if (required && value == null) throw new Error(`Config for "${key}" is required but not set.`);
         return value;
@@ -24,9 +24,24 @@ export class Config {
     /**
      * @throws Error if value is not parseable to a number
      */
-    getNum(key: string, required = false): number | undefined {
+    getStr<R extends boolean = false>(
+        key: string,
+        required?: R
+    ): R extends true ? string : string | undefined {
         const stored = this.get(key, required);
-        if (stored === undefined) return undefined;
+        if (stored === undefined) return undefined as any;
+        return String(stored);
+    }
+
+    /**
+     * @throws Error if value is not parseable to a number
+     */
+    getNum<R extends boolean = false>(
+        key: string,
+        required?: R
+    ): R extends true ? number : number | undefined {
+        const stored = this.get(key, required);
+        if (stored === undefined) return undefined as any;
         const num = Number(stored);
         if (isNaN(num)) throw new Error(`Config for "${key}" is not a number.`);
         return num;
@@ -35,9 +50,12 @@ export class Config {
     /**
      * @returns true if value is true, "true", "TRUE", 1, or "1", undefined if not found, false otherwise
      */
-    getBool(key: string, required = false): boolean | undefined {
+    getBool<R extends boolean = false>(
+        key: string,
+        required?: R
+    ): R extends true ? boolean : boolean | undefined {
         const num = this.get(key, required);
-        if (num === undefined) return undefined;
+        if (num === undefined) return undefined as any;
         return num === true || num === 1 || num === "true" || num === "TRUE" || num === "1";
     }
 
@@ -60,10 +78,8 @@ export class Config {
     /**
      * @param store Sync with store?
      */
-    async setMany(values: Record<string, any>, store = false) {
-        for (const key in values) {
-            await this.set(key, values[key], store);
-        }
+    setMany(values: Record<string, any>, store = false) {
+        return Promise.all(Object.entries(values).map(([key, value]) => this.set(key, value, store)));
     }
 
     /**
