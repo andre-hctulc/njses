@@ -8,7 +8,7 @@ Order of keys in objects does not affect the hash.
 */
 
 export interface DefaultServiceInit {
-    name?: string;
+    name: string;
     dynamic?: boolean;
     namespace?: string;
 }
@@ -82,64 +82,62 @@ export type MethodParams<S extends ServiceInstance, M extends MethodName<S>> = P
 
 /** Mounts the given service(s) */
 export async function inject<I extends Injectable>(injectable: I): Promise<Injection<I>> {
-    return await ServiceRegistery.inject(injectable, null);
+    return await Registery.inject(injectable, null);
 }
 
 /** `<serviceCtr, <paramsHash, T>>` */
-type ServiceMapCache<T> = Map<ServiceCtr, Map<string, T>>;
+type ServiceMapCache<T> = Map<string, Map<string, T>>;
 
 class ServiceMap<T> {
     private map: ServiceMapCache<T> = new Map();
 
-    getAll(service: ServiceCtr) {
-        return this.map.get(service);
+    allOf(serviceName: string) {
+        return this.map.get(serviceName);
     }
 
-    get(service: ServiceCtr, paramsHash: string) {
-        return this.map.get(service)?.get(paramsHash);
+    getAll() {
+        return Array.from(this.map.entries());
     }
 
-    set(service: ServiceCtr, paramsHash: string, value: T) {
-        if (!this.map.has(service)) this.map.set(service, new Map([[paramsHash, value]]));
-        else this.map.get(service)!.set(paramsHash, value);
+    get(serviceName: string, paramsHash: string) {
+        return this.map.get(serviceName)?.get(paramsHash);
     }
 
-    has(service: ServiceCtr, paramsHash: string) {
-        return this.map.get(service)?.has(paramsHash) || false;
+    set(serviceName: string, paramsHash: string, value: T) {
+        if (!this.map.has(serviceName)) this.map.set(serviceName, new Map([[paramsHash, value]]));
+        else this.map.get(serviceName)!.set(paramsHash, value);
     }
 
-    delete(service: ServiceCtr, paramsHash: string) {
-        this.map.get(service)?.delete(paramsHash);
+    has(serviceName: string, paramsHash: string) {
+        return this.map.get(serviceName)?.has(paramsHash) || false;
+    }
+
+    delete(serviceName: string, paramsHash: string) {
+        this.map.get(serviceName)?.delete(paramsHash);
     }
 }
 
-export abstract class ServiceRegistery {
-    private static instances = new ServiceMap<ServiceInstance>();
-    private static mounts = new ServiceMap<Promise<ServiceInstance>>();
-    private static roles: Map<string, Set<ServiceCtr>> = new Map();
+export class ServiceRegistery {
+    private instances = new ServiceMap<ServiceInstance>();
+    private mounts = new ServiceMap<Promise<ServiceInstance>>();
+    private roles: Map<string, Set<ServiceCtr>> = new Map();
 
     /**
      * Gets a static service instance
      */
-    static getInstance<S extends ServiceCtr>(
-        service: S,
-        params: ServiceParams<S>
-    ): ServiceInstance<S> | null {
-        return this.instances.get(service, hash(params)) || null;
+    getInstance<S extends ServiceCtr>(service: S, params: ServiceParams<S>): ServiceInstance<S> | null {
+        return this.instances.get(Shadow.getInit(service).name, hash(params)) || null;
     }
 
-    static getInstances<S extends ServiceCtr>(service: S): ServiceInstance<S>[] {
-        return Array.from(this.instances.getAll(service)?.values() || []);
+    getInstances<S extends ServiceCtr>(service: S): ServiceInstance<S>[] {
+        return Array.from(this.instances.allOf(Shadow.getInit(service).name)?.values() || []);
     }
 
-    private static constructService<S extends ServiceCtr>(
-        service: S,
-        params: ServiceParams<S>
-    ): ServiceInstance<S> {
+    private constructService<S extends ServiceCtr>(service: S, params: ServiceParams<S>): ServiceInstance<S> {
         return new service(...params) as any;
     }
 
-    static getAssignees(role: string): ServiceInstance[] {
+    getAssignees(role: string): ServiceInstance[] {
         const services = Array.from(this.roles.get(role) || []);
         return services.map((service) => this.getInstances(service)).flat();
     }
@@ -147,31 +145,29 @@ export abstract class ServiceRegistery {
     /**
      * Mounts the service and returns the instance.
      */
-    static mount<S extends ServiceCtr>(service: S, ...params: ServiceParams<S>): Promise<ServiceInstance<S>> {
+    mount<S extends ServiceCtr>(service: S, ...params: ServiceParams<S>): Promise<ServiceInstance<S>> {
         return this.mountService(service, params, true);
     }
 
     /**
      * Creates a new service instance and returns it.
      */
-    static create<S extends ServiceCtr>(
-        service: S,
-        ...params: ServiceParams<S>
-    ): Promise<ServiceInstance<S>> {
+    create<S extends ServiceCtr>(service: S, ...params: ServiceParams<S>): Promise<ServiceInstance<S>> {
         return this.mountService(service, params, true);
     }
 
-    static async destroy<S extends ServiceCtr>(service: S, cause: any, ...params: ServiceParams<S>) {
+    async destroy<S extends ServiceCtr>(service: S, cause: any, ...params: ServiceParams<S>) {
+        const serviceName = Shadow.getInit(service).name;
         const paramsHash = hash(params);
-        const instance = this.instances.get(service, paramsHash);
+        const instance = this.instances.get(serviceName, paramsHash);
         if (instance) {
             await this.invokeAll(instance, Shadow.getMethods(service, FIELD_NAME.DESTROY), [cause]);
         }
-        this.instances.delete(service, paramsHash);
-        this.mounts.delete(service, paramsHash);
+        this.instances.delete(serviceName, paramsHash);
+        this.mounts.delete(serviceName, paramsHash);
     }
 
-    private static async mountService<S extends ServiceCtr>(
+    private async mountService<S extends ServiceCtr>(
         service: S,
         params: ServiceParams<S>,
         forceDynamic = false
@@ -185,21 +181,35 @@ export abstract class ServiceRegistery {
         if (!shadow.init.dynamic && !forceDynamic) {
             let instance = this.getInstance(service, params);
 
-            // first injection
-            if (!instance) {
-                instance = this.constructService(service, params);
-                this.instances.set(service, paramsHash, instance);
-                const mount = this._initService(instance);
-                this.mounts.set(service, paramsHash, mount);
-                return mount;
+            // already mounted (or mounting) and ctr match
+            // For ctr mismatches we need to re-mount, because the service might have changed. This is the case for hot-reloading.
+            if (instance && instance.constructor === service) {
+                return instance;
             }
-            // already mounted (or mounting)
+            // first injection or mounting
             else {
-                // TODO do this with events?
-                const mounting = await this.mounts.get(service, paramsHash);
-                // This should never happen
-                if (!mounting) throw new Error("Mount not found");
-                return mounting;
+                // if ctr mismatch, remove the old instance // TODO destroy?
+                if (instance) {
+                    this.instances.delete(shadow.name, paramsHash);
+                    this.mounts.delete(shadow.name, paramsHash);
+                }
+
+                if (this.mounts.has(shadow.init.name, paramsHash))
+                    return this.mounts.get(shadow.init.name, paramsHash)!;
+
+                // Set roles
+                for (const role of shadow.roles) {
+                    if (!this.roles.has(role)) this.roles.set(role, new Set());
+                    this.roles.get(role)!.add(service);
+                }
+
+                instance = this.constructService(service, params);
+                const mount = this._initService(instance);
+                mount
+                    .then((inst) => this.instances.set(shadow.name, paramsHash, inst))
+                    .finally(() => this.mounts.delete(shadow.name, paramsHash));
+                this.mounts.set(shadow.name, paramsHash, mount);
+                return mount;
             }
         }
         // dynamic
@@ -210,7 +220,7 @@ export abstract class ServiceRegistery {
         }
     }
 
-    static async inject<S extends ServiceCtr, I extends Injectable<S, D>, D extends ServiceInstance>(
+    async inject<S extends ServiceCtr, I extends Injectable<S, D>, D extends ServiceInstance>(
         injectable: I,
         dependant: D | null = null
     ): Promise<Injection<I>> {
@@ -243,12 +253,12 @@ export abstract class ServiceRegistery {
         }
     }
 
-    static resolve<T = any>(serviceInstance: ServiceInstance, field: string | symbol, ...params: any[]): T {
+    resolve<T = any>(serviceInstance: ServiceInstance, field: string | symbol, ...params: any[]): T {
         if (typeof serviceInstance[field] === "function") return serviceInstance[field](...params);
         else return serviceInstance[field] as any;
     }
 
-    static invoke<M extends (...args: any) => any>(
+    invoke<M extends (...args: any) => any>(
         serviceInstance: ServiceInstance,
         methodName: string,
         params: Parameters<M>
@@ -256,7 +266,7 @@ export abstract class ServiceRegistery {
         return this.resolve(serviceInstance, methodName, ...(params as any)) as any;
     }
 
-    static invokeAll<M extends (...args: any) => any>(
+    invokeAll<M extends (...args: any) => any>(
         serviceInstance: ServiceInstance,
         methodNames: string[],
         params: Parameters<M>
@@ -264,29 +274,51 @@ export abstract class ServiceRegistery {
         return methodNames.map((methodName) => this.invoke(serviceInstance, methodName, params));
     }
 
-    private static async _initService(instance: ServiceInstance) {
-        // 1. initialize side effects
-        for (const sideEffect of Shadow.getSideEffects(instance)) {
-            await this.mountService(sideEffect, []);
+    private async _initService(instance: ServiceInstance) {
+        try {
+            // 1. initialize side effects
+            for (const sideEffect of Shadow.getSideEffects(instance)) {
+                await this.mountService(sideEffect, []);
+            }
+
+            // 2. inject deps
+            for (const depField in Shadow.getDeps(instance)) {
+                const usable = Shadow.getDep(instance, depField)!;
+                // mount deps
+                Object.defineProperty(instance, depField, {
+                    value: await this.inject(usable, instance),
+                    writable: false,
+                    enumerable: true,
+                });
+            }
+
+            // 3. call initializers
+            await this.invokeAll(instance, Shadow.getMethods(instance, FIELD_NAME.INIT), []);
+
+            // 4. call mounts
+            await this.invokeAll(instance, Shadow.getMethods(instance, FIELD_NAME.MOUNT), []);
+
+            return instance;
+        } catch (e) {
+            console.error("Failed to init service", e);
+            throw e;
         }
+    }
 
-        // 2. inject deps
-        for (const depField in Shadow.getDeps(instance)) {
-            const usable = Shadow.getDep(instance, depField)!;
-            // mount deps
-            Object.defineProperty(instance, depField, {
-                value: await this.inject(usable, instance),
-                writable: false,
-                enumerable: true,
-            });
-        }
-
-        // 3. call initializers
-        await this.invokeAll(instance, Shadow.getMethods(instance, FIELD_NAME.INIT), []);
-
-        // 4. call mounts
-        await this.invokeAll(instance, Shadow.getMethods(instance, FIELD_NAME.MOUNT), []);
-
-        return instance;
+    print() {
+        return `ServiceRegistery - Instances(${this.instances
+            .getAll()
+            .map(([serviceName, instances]) => `${serviceName}: ${instances.size}`)
+            .join(", ")}) Mounts(${this.instances
+            .getAll()
+            .map(([serviceName, instances]) => `${serviceName}: ${instances.size}`)
+            .join(", ")}) Roles(${Array.from(this.roles.entries())
+            .map(([role, services]) => `${role}: ${services.size}`)
+            .join(", ")})`;
     }
 }
+
+const glob: any = typeof window !== "undefined" ? window : global;
+
+export const Registery: ServiceRegistery =
+    glob.__service_registery || (glob.__service_registery = new ServiceRegistery());

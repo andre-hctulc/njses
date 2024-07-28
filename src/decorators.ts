@@ -2,7 +2,7 @@ import { FIELD_NAME } from "./utils/system";
 import type { ModuleInit } from "./modules";
 import {
     ServiceCtr,
-    ServiceRegistery,
+    Registery,
     Injectable,
     ServiceCollectionInterface,
     ServicePrototype,
@@ -28,7 +28,7 @@ export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleIn
  * Services are classes that are initialized once and can be injected into other services.
  * @class_decorator
  */
-export function Service<S extends object>(init: ShadowInit = {}) {
+export function Service<S extends object>(init: ShadowInit) {
     return function (service: ServiceCtr<S>) {
         Shadow.update(service, (shadow) => {
             shadow.name = init.name || shadow.name;
@@ -77,8 +77,8 @@ export function Inject<S extends ServiceCtr, D extends ServiceInstance | null = 
 export function On<S extends ServiceCtr>(emitter: S, eventType: string, ...params: ServiceParams<S>) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.on(emitter, eventType, function (...args: any[]) {
-            const listenerInstance = ServiceRegistery.getInstance(target.constructor, params);
-            if (listenerInstance) ServiceRegistery.resolve(target, propertyKey, args);
+            const listenerInstance = Registery.getInstance(target.constructor, params);
+            if (listenerInstance) Registery.resolve(target, propertyKey, args);
         });
     };
 }
@@ -99,21 +99,6 @@ export function Emit<A extends [...any] = []>(eventType: string) {
             return result;
         };
     };
-}
-
-/**
- * Factories are used to create instances of a service, called products. Factory methods are applied to the service instance.
- * The factory receive the service instance and possible parameters (`FactoryParams`) to extend the instance.
- *
- * Factories must be static!
- * @method_decorator
- */
-export function Factory<P = any>(
-    target: ServicePrototype,
-    propertyKey: string,
-    descriptor: PropertyDescriptor
-) {
-    Shadow.addMethod(target, FIELD_NAME.FACTORY, propertyKey);
 }
 
 /**
@@ -260,6 +245,7 @@ export function Seal(copy = false) {
 }
 
 /**
+ * Roles can only be assigned to static services!
  * @class_decorator
  */
 export function Role(...roles: string[]) {

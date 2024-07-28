@@ -2,6 +2,10 @@
 
 **Do not use this 🚑**
 
+## Features
+
+-   HMR support
+
 ## Patterns
 
 **Service**

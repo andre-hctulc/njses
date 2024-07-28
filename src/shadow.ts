@@ -75,7 +75,7 @@ export interface ServiceShadow extends Partial<CustomShadow> {
 
 export type ServiceEventListener<A extends [...any] = []> = (this: ServiceInstance<any>, ...args: A) => void;
 
-const SHADOW_SYMBOL = Symbol("$hadow");
+const SHADOW_SYMBOL = "$hadow";
 
 /** Default event types are prefixed with '$' */
 export enum ServiceEvent {
@@ -132,8 +132,12 @@ export abstract class Shadow {
                 methods: {},
             };
         }
-        serviceProto[SHADOW_SYMBOL] = mutate(shadow) || shadow;
-        return shadow as ServiceShadow;
+        return (serviceProto[SHADOW_SYMBOL] = mutate(shadow) || shadow);
+    }
+
+    static getInit(service: any): ShadowInit {
+        const shadow = this.get(service, true);
+        return shadow.init;
     }
 
     static addDep(service: any, field: Field, dep: Injectable): void {
