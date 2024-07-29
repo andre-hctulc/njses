@@ -11,20 +11,20 @@
 **Service**
 
 ```ts
-@Service()
-class DBProvider {
-    db!: DB;
+@Service({ name: "DBConnection" })
+class DBConnection {
+    conn!: Connection;
 
     constructor(private config: DBConfig) {}
 
     @Init
     initDb() {
-        this.db = await connectToDb(this.config);
+        this.conn = await connectToDb(this.config);
     }
 
     @Destroy
-    disconnect() {
-        this.db.disconnect();
+    async disconnect() {
+        await this.conn.end();
     }
 }
 ```
@@ -33,51 +33,60 @@ class DBProvider {
 
 ```ts
 @Service()
-class Users {
-    @Inject(DBProvider, dbConfig)
-    dbProvider!: DBProvider;
-
-    getUsers() {
-        return this.dbProvider.db.findUsers();
+class Settings {
+    async get(userId: string, settingName: string): SettingPromise {
+        ...
     }
+}
+
+@Service()
+class Users {
+    @Inject(Settings)
+    settings!: Settings;
+
+    getTheme(userId: string): SettingPromise {
+        return this.settings.get(userId, "theme");
+    }
+}
+```
+
+_Warning_: **Do not extend services**, compose them instead!
+
+```ts
+// ❌ This will lead to errrors
+@Service({ name: "MyDB" })
+class MyDB extends DBProvider {
+    ...
+}
+
+// ✅ Composed
+@Service({ name: "MyDB" })
+class MyDB {
+    @Inject([DBConnection, dbConfig])
+    db!: DBConnection
 }
 ```
 
 **SideEffects**
 
+Mounts the given services before the decorated one.
+
 ```ts
 @Service()
 @SideEffects(EnvInitializer)
 class Runner {
-    run () {
-        ...
-    }
+    ...
 }
 ```
 
 **Module**
 
-```ts
-@Module({ sideEffects: [EnvInitializer] })
-class App {
-    run () {
-        ...
-    }
-}
-```
-
-**Module**
+Creates a Service and provides some additional configuration options out of the box.
 
 ```ts
 @Module({ sideEffects: [EnvInitializer] })
 class App {
-    @Inject(Logger)
-    private logger!: Logger;
-
-    @Mount
-    logMe() {
-        this.logger.log("Mounted", this.toString());
-    }
+    ...
 }
 ```
 
@@ -91,6 +100,7 @@ class Broadcaster {
 
     @Emit("broadcast")
     broadcast(message: string) {
+        // The return value will b passed to the event listeners
         return ["Broadcasting: ", message];
     }
 }
