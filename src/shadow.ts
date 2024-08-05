@@ -1,5 +1,6 @@
 import { randomId } from "./utils/system";
 import type { DefaultServiceInit, ServiceCtr, ServiceInstance, Injectable } from "./service-registery";
+import { NJSESError } from "./errors";
 
 /** Property or Method */
 type Field = string | symbol;
@@ -29,7 +30,12 @@ export type FieldShadow = ServiceShadow["fields"][string];
 export type ParamShadow = FieldShadow["params"][number];
 export type ShadowInit = ServiceShadow["init"];
 
-export interface ServiceShadow extends Partial<CustomShadow> {
+/** Adds _$_ prefix to custom properties. */
+type ShadowExtension<I extends object = {}> = {
+    [K in keyof I as `$${string & K}`]?: I[K];
+};
+
+export interface ServiceShadow extends ShadowExtension<CustomShadow> {
     /** Service id */
     id: string;
     /** Service name */
@@ -39,7 +45,7 @@ export interface ServiceShadow extends Partial<CustomShadow> {
     /** List of roles */
     roles: Set<string>;
     /** Service init */
-    init: DefaultServiceInit & Partial<CustomServiceInit>;
+    init: DefaultServiceInit & ShadowExtension<CustomServiceInit>;
     // TODO params for side effects
     /** prerequisites that do not need to be injected  */
     sideEffects: Set<ServiceCtr<any>>;
@@ -58,10 +64,10 @@ export interface ServiceShadow extends Partial<CustomShadow> {
                 // default param
                 {
                     mapArg?: (arg: any, param: ParamShadow) => any;
-                } & Partial<CustomShadowParam>
+                } & ShadowExtension<CustomShadowParam>
             >;
             method: boolean;
-        } & Partial<CustomFieldShadow>
+        } & ShadowExtension<CustomFieldShadow>
     >;
     /** <fieldType, fields> - Can be used to memorize special fields. e.g. options */
     props: Record<string, Set<Field>>;
@@ -106,7 +112,7 @@ export abstract class Shadow {
         required?: R
     ): R extends true ? ServiceShadow : ServiceShadow | null {
         const sys = proto(service)?.[SHADOW_SYMBOL];
-        if (required && !sys) throw new Error("Not a service");
+        if (required && !sys) throw new NJSESError("Service shadow not found");
         return sys || null;
     }
 
@@ -136,8 +142,7 @@ export abstract class Shadow {
     }
 
     static getInit(service: any): ShadowInit {
-        const shadow = this.get(service, true);
-        return shadow.init;
+        return this.get(service, true).init;
     }
 
     static addDep(service: any, field: Field, dep: Injectable): void {
@@ -147,13 +152,11 @@ export abstract class Shadow {
     }
 
     static getDeps(service: any): Record<string, Injectable> {
-        const shadow = this.get(service, true);
-        return shadow.deps;
+        return this.get(service, true).deps;
     }
 
     static getDep(service: any, field: string): Injectable | null {
-        const shadow = this.get(service, true);
-        return shadow.deps[field] || null;
+        return this.get(service, true).deps[field] || null;
     }
 
     static addSideEffect(service: any, ...effects: ServiceCtr[]): void {
@@ -163,8 +166,7 @@ export abstract class Shadow {
     }
 
     static getSideEffects(service: any): ServiceCtr[] {
-        const shadow = this.get(service, true);
-        return Array.from(shadow.sideEffects);
+        return Array.from(this.get(service, true).sideEffects);
     }
 
     static setCtx(service: any, key: string, value: any): void {
@@ -174,28 +176,23 @@ export abstract class Shadow {
     }
 
     static getCtx(service: any, key: string) {
-        const shadow = this.get(service, true);
-        return shadow.ctx[key];
+        return this.get(service, true).ctx[key];
     }
 
     static getField(service: any, propertyKey: Field): FieldShadow | null {
-        const shadow = this.get(service, true);
-        return shadow.fields[propertyKey];
+        return this.get(service, true).fields[propertyKey];
     }
 
     static getFields(service: any): FieldShadow[] {
-        const shadow = this.get(service, true);
-        return Object.values(shadow.fields);
+        return Object.values(this.get(service, true).fields);
     }
 
     static hasField(service: any, propertyKey: Field): boolean {
-        const shadow = this.get(service, true);
-        return !!shadow.fields[propertyKey];
+        return !!this.get(service, true).fields[propertyKey];
     }
 
     static getParam(service: any, propertyKey: Field, paramIndex: number): ParamShadow | null {
-        const shadow = this.get(service, true);
-        return shadow.fields[propertyKey]?.params[paramIndex] || null;
+        return this.get(service, true).fields[propertyKey]?.params[paramIndex] || null;
     }
 
     static getParams(service: any, propertyKey: Field): FieldShadow["params"] | null {
@@ -264,8 +261,7 @@ export abstract class Shadow {
     }
 
     static getProps(service: any, type: string): Field[] {
-        const shadow = this.get(service, true);
-        return Array.from(shadow.props[type] || []);
+        return Array.from(this.get(service, true).props[type] || []);
     }
 
     /**
@@ -276,9 +272,8 @@ export abstract class Shadow {
         type: string,
         required?: R
     ): R extends true ? Field : Field | null {
-        const shadow = this.get(service, true);
-        const first = shadow.props[type].values().next().value;
-        if (required && first == null) throw new Error(`No field of type "${type}"`);
+        const first = this.get(service, true).props[type].values().next().value;
+        if (required && first == null) throw new NJSESError(`No field of type "${type}"`);
         return (first as any) || null;
     }
 
@@ -290,8 +285,7 @@ export abstract class Shadow {
     }
 
     static getMethods(service: any, type: string): string[] {
-        const shadow = this.get(service, true);
-        return Array.from(shadow.methods[type] || []);
+        return Array.from(this.get(service, true).methods[type] || []);
     }
 
     /**
@@ -302,15 +296,13 @@ export abstract class Shadow {
         type: string,
         required?: R
     ): R extends true ? string : string | null {
-        const shadow = this.get(service, true);
-        const first = shadow.methods[type].values().next().value;
-        if (required && first == null) throw new Error(`No method of type "${type}"`);
+        const first = this.get(service, true).methods[type].values().next().value;
+        if (required && first == null) throw new NJSESError(`No method of type "${type}"`);
         return (first as any) || null;
     }
 
     static emit<A extends [...any] = []>(service: any, event: string, ...args: A) {
-        const shadow = this.get(service, true);
-        const listeners = shadow.listeners[event];
+        const listeners = this.get(service, true).listeners[event];
         if (!listeners) return;
         for (const listener of Array.from(listeners)) {
             listener(...args);
@@ -328,5 +320,13 @@ export abstract class Shadow {
         this.update(service, (sys) => {
             roles.forEach((role) => sys.roles.add(role));
         });
+    }
+
+    static getRoles(service: any): string[] {
+        return Array.from(this.get(service, true).roles);
+    }
+
+    static hasRole(service: any, role: string): boolean {
+        return this.get(service, true).roles.has(role);
     }
 }

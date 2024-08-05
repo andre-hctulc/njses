@@ -1,3 +1,5 @@
+import { Configure, Destroy, Init, Mount } from "./decorators";
+import { NJSESError } from "./errors";
 import { Shadow } from "./shadow";
 import { FIELD_NAME } from "./utils/system";
 import hash from "stable-hash";
@@ -28,9 +30,13 @@ export type ServicePrototype = any;
 export type ServiceCollectionInterface = Record<string, ServiceCtr>;
 
 type SingleInjectable<S extends ServiceCtr = ServiceCtr, D extends ServiceInstance | null = null> =
+    // static
     | S
+    // static with params
     | [S, ...ServiceParams<S>]
-    | { dep: S; params: (dependant: D) => ServiceParams<S> };
+    // computed (This must be an arrow function, so we can detect it
+    // - arrow functions have no prototype, normal function do have one
+    | ((dependant: D) => [S, ...ServiceParams<S>]);
 
 export type ServiceCollection<
     M extends ServiceCollectionInterface = ServiceCollectionInterface,
@@ -39,6 +45,7 @@ export type ServiceCollection<
     [K in keyof M]: SingleInjectable<M[K], D>;
 };
 
+/** Computables must be provided as an arrow function! */
 export type Injectable<S extends ServiceCtr = ServiceCtr, D extends ServiceInstance = ServiceInstance> =
     | ServiceCollection<ServiceCollectionInterface, D>
     | SingleInjectable<S, D>;
@@ -46,9 +53,13 @@ export type Injectable<S extends ServiceCtr = ServiceCtr, D extends ServiceInsta
 type SingleInjection<I extends SingleInjectable> = I extends ServiceCtr
     ? ServiceInstance<I>
     : I extends [infer S, ...any[]]
-    ? S
-    : I extends { dep: infer D; params: (dependant: any) => any }
-    ? D
+    ? S extends ServiceCtr
+        ? ServiceInstance<S>
+        : never
+    : I extends (dependant: any) => [infer S, ...any[]]
+    ? S extends ServiceCtr
+        ? ServiceInstance<S>
+        : never
     : never;
 
 export type Injection<I extends Injectable> = I extends SingleInjectable
@@ -82,7 +93,7 @@ export type MethodParams<S extends ServiceInstance, M extends MethodName<S>> = P
 
 /** Mounts the given service(s) */
 export async function inject<I extends Injectable>(injectable: I): Promise<Injection<I>> {
-    return await Registery.inject(injectable, null);
+    return await Services.injectX(injectable, null);
 }
 
 /** `<serviceCtr, <paramsHash, T>>` */
@@ -142,29 +153,15 @@ export class ServiceRegistery {
         return services.map((service) => this.getInstances(service)).flat();
     }
 
-    /**
-     * Mounts the service and returns the instance.
-     */
-    mount<S extends ServiceCtr>(service: S, ...params: ServiceParams<S>): Promise<ServiceInstance<S>> {
-        return this.mountService(service, params, true);
-    }
-
-    /**
-     * Creates a new service instance and returns it.
-     */
-    create<S extends ServiceCtr>(service: S, ...params: ServiceParams<S>): Promise<ServiceInstance<S>> {
-        return this.mountService(service, params, true);
-    }
-
-    async destroy<S extends ServiceCtr>(service: S, cause: any, ...params: ServiceParams<S>) {
+    async destroy<S extends ServiceCtr>(service: S, reason: unknown, ...params: ServiceParams<S>) {
         const serviceName = Shadow.getInit(service).name;
         const paramsHash = hash(params);
         const instance = this.instances.get(serviceName, paramsHash);
-        if (instance) {
-            await this.invokeAll(instance, Shadow.getMethods(service, FIELD_NAME.DESTROY), [cause]);
-        }
         this.instances.delete(serviceName, paramsHash);
         this.mounts.delete(serviceName, paramsHash);
+        if (instance) {
+            await this.invokeAll<Destroy>(instance, Shadow.getMethods(service, FIELD_NAME.DESTROY), [reason]);
+        }
     }
 
     private async mountService<S extends ServiceCtr>(
@@ -175,7 +172,8 @@ export class ServiceRegistery {
         const paramsHash = hash(params);
         const shadow = Shadow.get(service);
 
-        if (!shadow) throw new Error("Not a service. Use @Service or @Module decorator.");
+        if (!shadow)
+            throw new NJSESError("Not a service. Use @Service or @Module decorator.", undefined, ["mount"]);
 
         // static
         if (!shadow.init.dynamic && !forceDynamic) {
@@ -188,10 +186,18 @@ export class ServiceRegistery {
             }
             // first injection or mounting
             else {
-                // if ctr mismatch, remove the old instance // TODO destroy?
+                // if ctr mismatch, remove the old instance
                 if (instance) {
-                    this.instances.delete(shadow.name, paramsHash);
-                    this.mounts.delete(shadow.name, paramsHash);
+                    // Check if ctr names are equal. If not it is guaranteed, that multiple services have the same name
+                    if (instance.constructor.name !== service.name) {
+                        throw new NJSESError(
+                            `Multiple services with name '${instance.constructor.name}' registered.`,
+                            undefined,
+                            ["mount"]
+                        );
+                    }
+
+                    await this.destroy(service, "re-mount", ...params);
                 }
 
                 if (this.mounts.has(shadow.init.name, paramsHash))
@@ -205,10 +211,10 @@ export class ServiceRegistery {
 
                 instance = this.constructService(service, params);
                 const mount = this._initService(instance);
+                this.mounts.set(shadow.name, paramsHash, mount);
                 mount
                     .then((inst) => this.instances.set(shadow.name, paramsHash, inst))
                     .finally(() => this.mounts.delete(shadow.name, paramsHash));
-                this.mounts.set(shadow.name, paramsHash, mount);
                 return mount;
             }
         }
@@ -220,33 +226,47 @@ export class ServiceRegistery {
         }
     }
 
-    async inject<S extends ServiceCtr, I extends Injectable<S, D>, D extends ServiceInstance>(
+    /**
+     * Creates a **dynamic** service instance and returns it.
+     */
+    create<S extends ServiceCtr>(service: S, ...params: ServiceParams<S>): Promise<ServiceInstance<S>> {
+        return this.mountService(service, params, true);
+    }
+
+    /**
+     * Injects a service and returns it. Use `injectX` for further injection configuration.
+     */
+    inject<S extends ServiceCtr>(service: S, ...params: ServiceParams<S>): Promise<ServiceInstance<S>> {
+        return this.mountService(service, params, false);
+    }
+
+    async injectX<I extends Injectable<ServiceCtr, D>, D extends ServiceInstance>(
         injectable: I,
         dependant: D | null = null
     ): Promise<Injection<I>> {
         if (Array.isArray(injectable)) {
-            // single params
+            // static with params
             return this.mountService<any>(injectable[0], injectable.slice(1));
         } else if (typeof injectable === "function") {
-            // single static
-            return this.mountService(injectable as ServiceCtr<any>, []);
-        } else {
-            // single computed params
-            if (typeof (injectable as any)["params"] === "function") {
-                return await this.mountService(
+            // IMP If injectable is computable and no arrow function, it will be treated as a static service here!
+            if (injectable.prototype) {
+                // static (Constructor function)
+                return this.mountService(injectable as ServiceCtr<any>, []);
+            } else {
+                // computed (Compute function)
+                return this.mountService(
                     (injectable as any).dep,
                     await (injectable as any).params(dependant)
                 );
             }
-
+        } else {
             // collection
-
             const obj: any = {};
 
             for (const key in injectable) {
                 const collection: ServiceCollection<any, any> = injectable as ServiceCollection;
                 const collectionItem = collection[key];
-                obj[key] = await this.inject(collectionItem, dependant);
+                obj[key] = await this.injectX(collectionItem, dependant);
             }
             Object.freeze(obj);
             return obj;
@@ -261,17 +281,23 @@ export class ServiceRegistery {
     invoke<M extends (...args: any) => any>(
         serviceInstance: ServiceInstance,
         methodName: string,
-        params: Parameters<M>
+        ...params: Parameters<M>
     ): ReturnType<M> {
-        return this.resolve(serviceInstance, methodName, ...(params as any)) as any;
+        if (typeof serviceInstance[methodName] !== "function")
+            throw new NJSESError(
+                `Method '${methodName}' not found on service instance of '${
+                    Shadow.getInit(serviceInstance).name
+                }'.`
+            );
+        return this.resolve(serviceInstance, methodName, params as any) as any;
     }
 
     invokeAll<M extends (...args: any) => any>(
         serviceInstance: ServiceInstance,
         methodNames: string[],
-        params: Parameters<M>
+        ...params: Parameters<M>
     ): ReturnType<M>[] {
-        return methodNames.map((methodName) => this.invoke(serviceInstance, methodName, params));
+        return methodNames.map((methodName) => this.invoke(serviceInstance, methodName, ...params));
     }
 
     private async _initService(instance: ServiceInstance) {
@@ -286,22 +312,24 @@ export class ServiceRegistery {
                 const usable = Shadow.getDep(instance, depField)!;
                 // mount deps
                 Object.defineProperty(instance, depField, {
-                    value: await this.inject(usable, instance),
+                    value: await this.injectX(usable, instance),
                     writable: false,
                     enumerable: true,
                 });
             }
 
-            // 3. call initializers
-            await this.invokeAll(instance, Shadow.getMethods(instance, FIELD_NAME.INIT), []);
+            // 3. call configures
+            await this.invokeAll<Configure>(instance, Shadow.getMethods(instance, FIELD_NAME.CONFIGURE));
 
-            // 4. call mounts
-            await this.invokeAll(instance, Shadow.getMethods(instance, FIELD_NAME.MOUNT), []);
+            // 4. call initializers
+            await this.invokeAll<Init>(instance, Shadow.getMethods(instance, FIELD_NAME.INIT));
+
+            // 5. call mounts
+            await this.invokeAll<Mount>(instance, Shadow.getMethods(instance, FIELD_NAME.MOUNT));
 
             return instance;
         } catch (e) {
-            console.error("Failed to init service", e);
-            throw e;
+            throw new NJSESError("Failed to init service", e, ["init"]);
         }
     }
 
@@ -320,5 +348,5 @@ export class ServiceRegistery {
 
 const glob: any = typeof window !== "undefined" ? window : global;
 
-export const Registery: ServiceRegistery =
+export const Services: ServiceRegistery =
     glob.__service_registery || (glob.__service_registery = new ServiceRegistery());

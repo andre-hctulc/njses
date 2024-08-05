@@ -59,32 +59,20 @@ export class Config {
         return num === true || num === 1 || num === "true" || num === "TRUE" || num === "1";
     }
 
-    /**
-     * @param store Sync with store?
-     */
     async set<T = any>(key: string, value: T, store = false) {
         this._mem.set(key, value);
         if (store && this._store) await this._storeService.set(this._store, key, value);
     }
 
-    /**
-     * @param store Sync with store?
-     */
     setSync<T = any>(key: string, value: T, store = false) {
         this._mem.set(key, value);
         if (store && this._store) this._storeService.set(this._store, key, value);
     }
 
-    /**
-     * @param store Sync with store?
-     */
     setMany(values: Record<string, any>, store = false) {
         return Promise.all(Object.entries(values).map(([key, value]) => this.set(key, value, store)));
     }
 
-    /**
-     * @param store Sync with store?
-     */
     setManySync(values: Record<string, any>, store = false) {
         for (const key in values) {
             this.setSync(key, values[key], store);
@@ -95,9 +83,11 @@ export class Config {
      * Loads all environment variables into memory
      */
     loadEnv() {
-        for (const key in process.env) {
-            this.set(key, process.env[key]);
-        }
+        return this.setMany(process.env);
+    }
+
+    loadEnvSync() {
+        this.setMany(process.env);
     }
 
     private _store: any;

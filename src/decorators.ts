@@ -1,21 +1,16 @@
-import { FIELD_NAME } from "./utils/system";
+import { FIELD_NAME, ROLE_NAME } from "./utils/system";
 import type { ModuleInit } from "./modules";
-import {
-    ServiceCtr,
-    Registery,
-    Injectable,
-    ServiceCollectionInterface,
-    ServicePrototype,
-    ServiceParams,
-    ServiceInstance,
-} from "./service-registery";
+import { ServiceCtr, Services, Injectable, ServicePrototype, ServiceInstance } from "./service-registery";
 import { ShadowInit, Shadow, ParamShadow } from "./shadow";
+import { OP } from "./utils/system-types";
+
+// --- Registery ---
 
 /**
  * Modules are Services that bundle dependencies and side effects.
  * @class_decorator
  */
-export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleInit) {
+export function Module(init: ModuleInit) {
     return function (service: ServiceCtr) {
         // register as service
         Service({ name: init.name })(service);
@@ -28,8 +23,8 @@ export function Module<U extends ServiceCollectionInterface = {}>(init: ModuleIn
  * Services are classes that are initialized once and can be injected into other services.
  * @class_decorator
  */
-export function Service<S extends object>(init: ShadowInit) {
-    return function (service: ServiceCtr<S>) {
+export function Service(init: ShadowInit) {
+    return function (service: ServiceCtr) {
         Shadow.update(service, (shadow) => {
             shadow.name = init.name || shadow.name;
             shadow.namespace = init.namespace || "";
@@ -37,6 +32,20 @@ export function Service<S extends object>(init: ShadowInit) {
         });
     };
 }
+
+/**
+ * Assigns roles to the decorated service.
+ *
+ * Roles can only be assigned to static services!
+ * @class_decorator
+ */
+export function Role(...roles: string[]) {
+    return function (target: ServiceCtr) {
+        Shadow.addRoles(target, ...roles);
+    };
+}
+
+// --- Dependencies ---
 
 /**
  * Services, that are initialized before the decorated service.
@@ -51,14 +60,6 @@ export function SideEffects(...effects: ServiceCtr[]) {
 }
 
 /**
- * Executes the decorated method _after_ the service is initialized.
- * @method_decorator
- */
-export function Mount(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.MOUNT, propertyKey);
-}
-
-/**
  * @template D Dependant
  * @prop_decorator
  */
@@ -70,18 +71,55 @@ export function Inject<S extends ServiceCtr, D extends ServiceInstance | null = 
     };
 }
 
+// --- Lifecycle ---
+
+export type Init = () => any;
+
+/**
+ * Marks the decorated method as initializer.
+ * @method_decorator
+ */
+export function Init(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.INIT, propertyKey);
+}
+
+export type Mount = () => any;
+
+/**
+ * Executes the decorated method _after_ the service is initialized.
+ * @method_decorator
+ */
+export function Mount(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.MOUNT, propertyKey);
+}
+
+export type Destroy = (reason: unknown) => any;
+
+/**
+ * The decorated method is called when the service is destroyed.
+ * @method_decorator
+ */
+export function Destroy(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.DESTROY, propertyKey);
+}
+
+export type On = (service: ServiceCtr, eventType: string) => any;
+
+// --- Events ---
+
 /**
  * The decorated method receives the event arguments as arguments.
  * @method_decorator
  */
-export function On<S extends ServiceCtr>(emitter: S, eventType: string, ...params: ServiceParams<S>) {
+export function On(emitter: ServiceCtr, eventType: string) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-        Shadow.on(emitter, eventType, function (...args: any[]) {
-            const listenerInstance = Registery.getInstance(target.constructor, params);
-            if (listenerInstance) Registery.resolve(target, propertyKey, args);
+        Shadow.on(emitter, eventType, (...args: any[]) => {
+            Services.invoke(target, propertyKey, args);
         });
     };
 }
+
+export type Emit = (...args: any) => any;
 
 /**
  * The return value of the decorated method will be used as arguments for event handlers.
@@ -100,6 +138,8 @@ export function Emit<A extends [...any] = []>(eventType: string) {
         };
     };
 }
+
+// --- Method transformations ---
 
 /**
  * @parameter_decorator
@@ -169,26 +209,6 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
 }
 
 /**
- * Marks the decorated method as initializer.
- * @method_decorator
- */
-export function Init(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.INIT, propertyKey);
-}
-
-// /**
-//  * Marks the decorated method as configurer. Configurers are executed before any dependencies are initialized.
-//  * The decorated method receives the default module instance as argument.
-//  *
-//  * Can be used to define configurations for other services.
-//  *
-//  * @method_decorator
-//  */
-// export function Configure(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-//     Shadow.addMethod(target, FIELD_NAME.CONFIGURE, propertyKey);
-// }
-
-/**
  * @method_decorator
  */
 export function Subscription(interval: number) {
@@ -199,6 +219,21 @@ export function Subscription(interval: number) {
         }, interval);
     };
 }
+
+// --- Config ---
+
+export type Configure = () => OP<void | [option: string, value: any] | [option: string, value: any][]>;
+
+/**
+ * Called after all dependencies are injected and before initialization.
+ * Can be used to configure other services.
+ * @method_decorator
+ */
+export function Configure(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.CONFIGURE, propertyKey);
+}
+
+// --- Seal/Freeze  ---
 
 /**
  * Deep seals the property or class.
@@ -241,16 +276,6 @@ export function Seal(copy = false) {
             enumerable: true,
             configurable: false,
         });
-    };
-}
-
-/**
- * Roles can only be assigned to static services!
- * @class_decorator
- */
-export function Role(...roles: string[]) {
-    return function (target: ServiceCtr) {
-        Shadow.addRoles(target, ...roles);
     };
 }
 
@@ -298,6 +323,10 @@ export function Freeze(copy = false) {
     };
 }
 
+// --- Store ---
+
+export type StoreGet = (id: string) => any;
+
 /**
  * Getter for a store.
  * @method_decorator
@@ -305,6 +334,8 @@ export function Freeze(copy = false) {
 export function StoreGet(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
     Shadow.addMethod(target, FIELD_NAME.STORE_SET, propertyKey);
 }
+
+export type StoreSet = (id: string, value: string) => void;
 
 /**
  * Setter for a store.
@@ -314,6 +345,8 @@ export function StoreSet(target: ServicePrototype, propertyKey: string, descript
     Shadow.addMethod(target, FIELD_NAME.STORE_GET, propertyKey);
 }
 
+export type StoreGetAll = () => OP<[id: string, value: any][]>;
+
 /**
  * All getter for a store.
  * @method_decorator
@@ -322,13 +355,97 @@ export function StoreGetAll(target: ServicePrototype, propertyKey: string, descr
     Shadow.addMethod(target, FIELD_NAME.STORE_GET_ALL, propertyKey);
 }
 
+// --- Reporsitory ---
+
 /**
- * The decorated method is called when the service is destroyed.
+ * @class_decorator
+ */
+export function Repo(target: ServiceCtr) {
+    Shadow.addRoles(target, ROLE_NAME.REPO);
+}
+
+export type Find<I, D> = (id: I) => OP<D>;
+
+/**
  * @method_decorator
  */
-export function Destroy(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.DESTROY, propertyKey);
+export function Find(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_FIND, propertyKey);
 }
+
+export type FindFirst<Q, D> = (query: Q) => OP<D | null>;
+
+/**
+ * @method_decorator
+ */
+export function FindFirst(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_FIND_FIRST, propertyKey);
+}
+
+export type FindMany<Q, D> = (query: Q) => OP<D[]>;
+
+/**
+ * @method_decorator
+ */
+export function FindMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_FIND_MANY, propertyKey);
+}
+
+export type Create<I, D> = (value: Partial<D>) => OP<I>;
+
+/**
+ * @method_decorator
+ */
+export function Create(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_CREATE, propertyKey);
+}
+
+export type CreateMany<I, D> = (values: Partial<D>[]) => OP<I[]>;
+
+/**
+ * @method_decorator
+ */
+export function CreateMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_CREATE_MANY, propertyKey);
+}
+
+export type Delete<I> = (id: I) => void;
+
+/**
+ * @method_decorator
+ */
+export function Delete(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_DELETE, propertyKey);
+}
+
+export type DeleteMany<I, Q> = (query: Q) => OP<I[]>;
+
+/**
+ * @method_decorator
+ */
+export function DeleteMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_DELETE_MANY, propertyKey);
+}
+
+export type Update<I, T> = (id: I, value: Partial<T>) => void;
+
+/**
+ * @method_decorator
+ */
+export function Update(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_UPDATE, propertyKey);
+}
+
+export type UpdateMany<I, Q, D> = (query: Q, data: Partial<D>) => OP<I[]>;
+
+/**
+ * @method_decorator
+ */
+export function UpdateMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
+    Shadow.addMethod(target, FIELD_NAME.REPO_UPDATE_MANY, propertyKey);
+}
+
+// --- Val ---
 
 /**
  * Apply this to parameters to validate them before the function is called.
