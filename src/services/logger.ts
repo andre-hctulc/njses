@@ -1,6 +1,6 @@
-import { Shadow } from "../shadow";
-import type { ServiceInstance } from "../service-registery";
-import { Service } from "../decorators";
+import { Shadow } from "../main/shadow";
+import type { Instance } from "../main/service-registery";
+import { Service } from "../main/decorators";
 
 type LogLevel = "all" | "verbose" | "important" | "silent";
 
@@ -8,7 +8,7 @@ export type LogOptions = {
     /** @default "important" */
     level?: LogLevel;
     devOnly?: boolean;
-    service?: ServiceInstance;
+    service?: Instance;
 };
 
 const OPTIONS_SYMBOL = Symbol.for("njses_log_options_symbol");
@@ -37,11 +37,8 @@ export class Logger {
                 if (opts.devOnly && process.env.NODE_ENV !== "development") return;
                 if (opts.level && !this._matchesLogLevel(opts.level)) return;
                 if (opts.service) {
-                    const shadow = Shadow.get(opts.service, true);
-                    if (shadow)
-                        labels.push(
-                            `(Service ${shadow.namespace ? shadow.namespace + "/" : ""}${shadow.name})`
-                        );
+                    const shadow = Shadow.require(opts.service);
+                    labels.push(`(Service ${shadow.namespace ? shadow.namespace + "/" : ""}${shadow.name})`);
                 }
             } else {
                 parts.push(message);

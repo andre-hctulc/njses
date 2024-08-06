@@ -1,6 +1,6 @@
 export class NJSESError extends Error {
     static message(message: string, tags?: string[]) {
-        return `NJSES Error ${tags?.length ? "(" + tags.join(", ") + ")" : ""}: ${message}`;
+        return `NJSES Error${tags?.length ? " (" + tags.join(", ") + ")" : ""}: ${message}`;
     }
 
     constructor(message: string, readonly cause?: unknown, readonly tags: string[] = []) {

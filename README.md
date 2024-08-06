@@ -50,23 +50,6 @@ class Users {
 }
 ```
 
-_Warning_: **Do not extend services**, compose them instead!
-
-```ts
-// ❌ This will lead to errrors
-@Service({ name: "MyDB" })
-class MyDB extends DBProvider {
-    ...
-}
-
-// ✅ Composed
-@Service({ name: "MyDB" })
-class MyDB {
-    @Inject([DBConnection, dbConfig])
-    db!: DBConnection
-}
-```
-
 **SideEffects**
 
 Mounts the given services before the decorated one.

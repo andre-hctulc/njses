@@ -1,47 +1,55 @@
-import { FIELD_NAME, ROLE_NAME } from "./utils/system";
 import type { ModuleInit } from "./modules";
-import { ServiceCtr, Services, Injectable, ServicePrototype, ServiceInstance } from "./service-registery";
-import { ShadowInit, Shadow, ParamShadow } from "./shadow";
-import { OP } from "./utils/system-types";
+import { ServiceCtr, App, Injectable, ServicePrototype, Instance } from "./service-registery";
+import { ShadowInit as ShadowInit, Shadow, ParamShadow } from "./shadow";
+import type { OP } from "../utils/types";
+import { NJSESError } from "./errors";
+import { FIELD_NAME, ROLE_NAME } from "./system";
 
 // --- Registery ---
 
 /**
- * Modules are Services that bundle dependencies and side effects.
+ * @class_decorator
+ */
+export function Service(init: Omit<ShadowInit, "dynamic">) {
+    return function (service: ServiceCtr) {
+        Shadow.create(service, { ...init, dynamic: false });
+    };
+}
+
+/**
+ * @class_decorator
+ */
+export function Entity(init: Omit<ShadowInit, "dynamic">) {
+    return function (service: ServiceCtr) {
+        Shadow.create(service, { ...init, dynamic: true });
+    };
+}
+
+/**
+ * Modules are special kind of Services that bundle some common service functionality.
  * @class_decorator
  */
 export function Module(init: ModuleInit) {
     return function (service: ServiceCtr) {
         // register as service
         Service({ name: init.name })(service);
-        if (init.sideEffects) Shadow.addSideEffect(service, ...init.sideEffects);
-        if (init.roles) Shadow.addRoles(service, ...init.roles);
-    };
-}
-
-/**
- * Services are classes that are initialized once and can be injected into other services.
- * @class_decorator
- */
-export function Service(init: ShadowInit) {
-    return function (service: ServiceCtr) {
-        Shadow.update(service, (shadow) => {
-            shadow.name = init.name || shadow.name;
-            shadow.namespace = init.namespace || "";
-            if (init) shadow.init = init;
-        });
+        const shadow = Shadow.require(service);
+        if (init.sideEffects) shadow.addSideEffects(...init.sideEffects);
+        if (init.roles) shadow.addRoles(...init.roles);
     };
 }
 
 /**
  * Assigns roles to the decorated service.
  *
- * Roles can only be assigned to static services!
+ * Roles can only be assigned to services!
  * @class_decorator
  */
 export function Role(...roles: string[]) {
     return function (target: ServiceCtr) {
-        Shadow.addRoles(target, ...roles);
+        const shadow = Shadow.require(target);
+        if (shadow.isEntity) throw new NJSESError("Roles can only be assigned to services");
+        shadow.addRoles(...roles);
     };
 }
 
@@ -54,8 +62,8 @@ export function Role(...roles: string[]) {
  * @class_decorator
  */
 export function SideEffects(...effects: ServiceCtr[]) {
-    return function (service: ServiceCtr) {
-        Shadow.addSideEffect(service, ...effects);
+    return function (target: ServiceCtr) {
+        Shadow.require(target).addSideEffects(...effects);
     };
 }
 
@@ -63,11 +71,9 @@ export function SideEffects(...effects: ServiceCtr[]) {
  * @template D Dependant
  * @prop_decorator
  */
-export function Inject<S extends ServiceCtr, D extends ServiceInstance | null = null>(
-    injectable: Injectable<S, D>
-) {
+export function Inject<S extends ServiceCtr, D extends Instance | null = null>(injectable: Injectable<S, D>) {
     return function (target: ServicePrototype, propertyKey: string | symbol) {
-        Shadow.addDep(target, propertyKey, injectable);
+        Shadow.require(target).addInjection(propertyKey, injectable);
     };
 }
 
@@ -80,7 +86,7 @@ export type Init = () => any;
  * @method_decorator
  */
 export function Init(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.INIT, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.INIT, propertyKey);
 }
 
 export type Mount = () => any;
@@ -90,7 +96,7 @@ export type Mount = () => any;
  * @method_decorator
  */
 export function Mount(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.MOUNT, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.MOUNT, propertyKey);
 }
 
 export type Destroy = (reason: unknown) => any;
@@ -100,7 +106,7 @@ export type Destroy = (reason: unknown) => any;
  * @method_decorator
  */
 export function Destroy(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.DESTROY, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.DESTROY, propertyKey);
 }
 
 export type On = (service: ServiceCtr, eventType: string) => any;
@@ -113,8 +119,8 @@ export type On = (service: ServiceCtr, eventType: string) => any;
  */
 export function On(emitter: ServiceCtr, eventType: string) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-        Shadow.on(emitter, eventType, (...args: any[]) => {
-            Services.invoke(target, propertyKey, args);
+        Shadow.require(emitter).on(eventType, (...args: any[]) => {
+            App.invoke(target, propertyKey, args);
         });
     };
 }
@@ -133,7 +139,7 @@ export function Emit<A extends [...any] = []>(eventType: string) {
         descriptor.value = function (...args: any[]) {
             const result: any[] = originalMethod.apply(this, args);
             const newArgs = Array.isArray(result) ? result : result ? [result] : [];
-            Shadow.emit(target, eventType, ...newArgs);
+            Shadow.require(target).emit(eventType, ...newArgs);
             return result;
         };
     };
@@ -146,7 +152,7 @@ export function Emit<A extends [...any] = []>(eventType: string) {
  */
 export function MapArg<I, O>(mapArg: (arg: I, paramShadow: ParamShadow | null) => O) {
     return function (target: any, propertyKey: string, parameterIndex: number) {
-        Shadow.addParam(target, propertyKey, parameterIndex, { mapArg: mapArg });
+        Shadow.require(target).addParam(propertyKey, parameterIndex, { mapArg: mapArg });
     };
 }
 
@@ -164,7 +170,7 @@ export function Flush<I extends [...any], O extends [...any]>(
 
         descriptor.value = function (...args: any[]) {
             let newArgs: O;
-            const paramsShadow = Shadow.getParams(target, propertyKey) || {};
+            const paramsShadow = Shadow.require(target).getParams(propertyKey) || {};
 
             // Use given args mapper
             if (typeof mapArgs === "function") {
@@ -211,7 +217,7 @@ export function Throws<E extends Error>(error: (err: unknown) => E) {
 /**
  * @method_decorator
  */
-export function Subscription(interval: number) {
+export function Periodic(interval: number) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
         setInterval(() => {
             const originalMethod = descriptor.value;
@@ -230,7 +236,7 @@ export type Configure = () => OP<void | [option: string, value: any] | [option: 
  * @method_decorator
  */
 export function Configure(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.CONFIGURE, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.CONFIGURE, propertyKey);
 }
 
 // --- Seal/Freeze  ---
@@ -332,7 +338,7 @@ export type StoreGet = (id: string) => any;
  * @method_decorator
  */
 export function StoreGet(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.STORE_SET, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.STORE_SET, propertyKey);
 }
 
 export type StoreSet = (id: string, value: string) => void;
@@ -342,7 +348,7 @@ export type StoreSet = (id: string, value: string) => void;
  * @method_decorator
  */
 export function StoreSet(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.STORE_GET, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.STORE_GET, propertyKey);
 }
 
 export type StoreGetAll = () => OP<[id: string, value: any][]>;
@@ -352,16 +358,16 @@ export type StoreGetAll = () => OP<[id: string, value: any][]>;
  * @method_decorator
  */
 export function StoreGetAll(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.STORE_GET_ALL, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.STORE_GET_ALL, propertyKey);
 }
 
-// --- Reporsitory ---
+// --- Repository ---
 
 /**
  * @class_decorator
  */
 export function Repo(target: ServiceCtr) {
-    Shadow.addRoles(target, ROLE_NAME.REPO);
+    Shadow.require(target).addRoles(ROLE_NAME.REPO);
 }
 
 export type Find<I, D> = (id: I) => OP<D>;
@@ -370,7 +376,7 @@ export type Find<I, D> = (id: I) => OP<D>;
  * @method_decorator
  */
 export function Find(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_FIND, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_FIND, propertyKey);
 }
 
 export type FindFirst<Q, D> = (query: Q) => OP<D | null>;
@@ -379,7 +385,7 @@ export type FindFirst<Q, D> = (query: Q) => OP<D | null>;
  * @method_decorator
  */
 export function FindFirst(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_FIND_FIRST, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_FIND_FIRST, propertyKey);
 }
 
 export type FindMany<Q, D> = (query: Q) => OP<D[]>;
@@ -388,7 +394,7 @@ export type FindMany<Q, D> = (query: Q) => OP<D[]>;
  * @method_decorator
  */
 export function FindMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_FIND_MANY, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_FIND_MANY, propertyKey);
 }
 
 export type Create<I, D> = (value: Partial<D>) => OP<I>;
@@ -397,7 +403,7 @@ export type Create<I, D> = (value: Partial<D>) => OP<I>;
  * @method_decorator
  */
 export function Create(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_CREATE, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_CREATE, propertyKey);
 }
 
 export type CreateMany<I, D> = (values: Partial<D>[]) => OP<I[]>;
@@ -406,7 +412,7 @@ export type CreateMany<I, D> = (values: Partial<D>[]) => OP<I[]>;
  * @method_decorator
  */
 export function CreateMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_CREATE_MANY, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_CREATE_MANY, propertyKey);
 }
 
 export type Delete<I> = (id: I) => void;
@@ -415,7 +421,7 @@ export type Delete<I> = (id: I) => void;
  * @method_decorator
  */
 export function Delete(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_DELETE, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_DELETE, propertyKey);
 }
 
 export type DeleteMany<I, Q> = (query: Q) => OP<I[]>;
@@ -424,7 +430,7 @@ export type DeleteMany<I, Q> = (query: Q) => OP<I[]>;
  * @method_decorator
  */
 export function DeleteMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_DELETE_MANY, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_DELETE_MANY, propertyKey);
 }
 
 export type Update<I, T> = (id: I, value: Partial<T>) => void;
@@ -433,7 +439,7 @@ export type Update<I, T> = (id: I, value: Partial<T>) => void;
  * @method_decorator
  */
 export function Update(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_UPDATE, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_UPDATE, propertyKey);
 }
 
 export type UpdateMany<I, Q, D> = (query: Q, data: Partial<D>) => OP<I[]>;
@@ -442,7 +448,7 @@ export type UpdateMany<I, Q, D> = (query: Q, data: Partial<D>) => OP<I[]>;
  * @method_decorator
  */
 export function UpdateMany(target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
-    Shadow.addMethod(target, FIELD_NAME.REPO_UPDATE_MANY, propertyKey);
+    Shadow.require(target).addMethod(FIELD_NAME.REPO_UPDATE_MANY, propertyKey);
 }
 
 // --- Val ---

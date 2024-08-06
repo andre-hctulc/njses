@@ -1,5 +1,5 @@
-import type { ServiceInstance } from "../service-registery";
-import { Service, Inject } from "../decorators";
+import type { Instance } from "../main/service-registery";
+import { Service, Inject } from "../main/decorators";
 import { Store } from "./store";
 
 @Service({ name: "$$Config" })
@@ -95,7 +95,7 @@ export class Config {
     /**
      * @param load If true, loads all stored values into memory
      */
-    async setStore(storesService: ServiceInstance, load = true) {
+    async setStore(storesService: Instance, load = true) {
         this._store = storesService;
         const all = await this._storeService.getAll(this._store);
         if (load) {
@@ -106,7 +106,7 @@ export class Config {
     /**
      * Loads all stored values into memory
      */
-    async loadStore(storesService: ServiceInstance) {
+    async loadStore(storesService: Instance) {
         const all = await this._storeService.getAll(storesService);
         await this.setMany(all.reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {}));
     }

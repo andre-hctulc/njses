@@ -1,15 +1,17 @@
+import { NJSESError } from "./errors";
+
 /**
  * Handle environment variables for service setups.
  *
  * ### Example
  * ```ts
- * const { region, accountId} = setup({
+ * const { region, accountId } = setup({
  *    region: "AWS_REGION",
  *    accountId: "AWS_ACCOUNT_ID",
  * });
  * ```
  */
-export function setup<E extends Record<string, string | { default: string; varName: string }>>(
+export function setup<E extends Record<string, string | { default: string; envVarName: string }>>(
     env: E
 ): E extends string ? string : { [K in keyof E]: string } {
     const result: any = {};
@@ -25,9 +27,9 @@ export function setup<E extends Record<string, string | { default: string; varNa
         }
 
         if (v === undefined) {
-            throw new Error(`Environment variable ${env[key]} is not defined`);
+            throw new NJSESError(`Environment variable ${env[key]} is not defined.`);
         }
-        
+
         result[key] = v;
     }
     return result;
