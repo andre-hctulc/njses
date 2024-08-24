@@ -1,4 +1,4 @@
-import type { DefaultShadowInit, ServiceCtr, Instance, Injectable } from "./service-registery";
+import type { ComponentCtr, Instance, Injectable } from "./registery";
 import { NJSESError } from "./errors";
 import { merge } from "../utils/util";
 import { Reflection } from "../utils/reflection";
@@ -41,6 +41,12 @@ export type FieldShadow = {
 export type ParamShadow = {
     mapArg?: (arg: any, param: ParamShadow) => any;
 } & ShadowExtension<CustomShadowParam>;
+
+export interface DefaultShadowInit {
+    name: string;
+    dynamic?: boolean;
+    namespace?: string;
+}
 
 export type ShadowInit = DefaultShadowInit & ShadowExtension<CustomShadowInit>;
 export type ShadowContext = ShadowExtension<CustomShadowContext>;
@@ -102,7 +108,7 @@ export class Shadow {
     /** List of roles */
     private _roles: Set<string> = new Set();
     /** prerequisites that do not need to be injected  */
-    private _sideEffects: Set<ServiceCtr<any>> = new Set();
+    private _sideEffects: Set<ComponentCtr<any>> = new Set();
     /** `<field, usable+params>` */
     private _injections: Record<Field, Injectable> = {};
     /** Define some context */
@@ -117,7 +123,7 @@ export class Shadow {
     private _listeners: Record<string, Set<EventHandler<any>>> = {};
     private _init: ShadowInit;
 
-    constructor(serviceCtr: ServiceCtr, init: ShadowInit) {
+    constructor(serviceCtr: ComponentCtr, init: ShadowInit) {
         this.name = init.name;
         this.namespace = init.namespace || "";
         this.isEntity = !!init.dynamic;
@@ -125,10 +131,7 @@ export class Shadow {
         // extend base shadow
         const chain = Reflection.ctrChain(serviceCtr);
         chain.shift();
-        Shadow.merge(
-            this,
-            chain.map((ctr) => Shadow.get(ctr)).filter((s) => !!s)
-        );
+        Shadow.merge(this, chain.map((ctr) => Shadow.get(ctr)).filter((s) => !!s) as Shadow[]);
     }
 
     get init(): ShadowInit {
@@ -147,11 +150,11 @@ export class Shadow {
         return this._injections;
     }
 
-    addSideEffects(...effects: ServiceCtr[]): void {
+    addSideEffects(...effects: ComponentCtr[]): void {
         effects.forEach((c) => this._sideEffects.add(c));
     }
 
-    getSideEffects(): ServiceCtr[] {
+    getSideEffects(): ComponentCtr[] {
         return Array.from(this._sideEffects);
     }
 

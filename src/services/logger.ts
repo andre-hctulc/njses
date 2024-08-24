@@ -1,5 +1,5 @@
 import { Shadow } from "../main/shadow";
-import type { Instance } from "../main/service-registery";
+import type { Instance } from "../main/registery";
 import { Service } from "../main/decorators";
 
 type LogLevel = "all" | "verbose" | "important" | "silent";

@@ -1,8 +1,7 @@
-import type {  ServiceCtr } from "./service-registery";
-
+import type { ComponentCtr } from "./registery";
 
 export type ModuleInit = {
     name: string;
-    sideEffects?: ServiceCtr[];
+    sideEffects?: ComponentCtr[];
     roles?: string[];
 };

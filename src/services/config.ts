@@ -1,4 +1,4 @@
-import type { Instance } from "../main/service-registery";
+import type { Instance } from "../main/registery";
 import { Service, Inject } from "../main/decorators";
 import { Store } from "./store";
 

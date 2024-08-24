@@ -5,20 +5,21 @@
 ## Features
 
 -   HMR support
+-   ...TODO
 
 ## Patterns
 
 **Service**
 
 ```ts
-@Service({ name: "DBConnection" })
-class DBConnection {
+@Service({ name: "DB" })
+class DB {
     conn!: Connection;
 
     constructor(private config: DBConfig) {}
 
     @Init
-    initDb() {
+    private initDb() {
         this.conn = await connectToDb(this.config);
     }
 
@@ -29,12 +30,28 @@ class DBConnection {
 }
 ```
 
+**Entity**
+
+Entities can be mounted like Services with `App.registery.mountEntity`,
+but they should not depend on the lifycycle methods (e.g. @Init)!
+
+```ts
+@Entity({ name: "PostModel" })
+class PostModel {
+    owner: "";
+    content = "";
+    createdAt = new Date(0);
+}
+```
+
 **Inject**
+
+Only Services can be injected; Entites cannot.
 
 ```ts
 @Service()
 class Settings {
-    async get(userId: string, settingName: string): SettingPromise {
+    async get(userId: string, settingName: string): Promise<any> {
         ...
     }
 }
@@ -42,9 +59,14 @@ class Settings {
 @Service()
 class Users {
     @Inject(Settings)
-    settings!: Settings;
+    private settings!: Settings;
 
-    getTheme(userId: string): SettingPromise {
+    // Inject with parameters
+    @Inject(DB, { ... })
+    private db!: DB;
+
+
+    getTheme(userId: string): Promise<string> {
         return this.settings.get(userId, "theme");
     }
 }
@@ -69,6 +91,25 @@ Creates a Service and provides some additional configuration options out of the 
 ```ts
 @Module({ sideEffects: [EnvInitializer] })
 class App {
+    ...
+}
+```
+
+**Role/FieldRole**
+
+```ts
+@Role("Serializer")
+@Service()
+class Serializer {
+    @FieldRole("serialize")
+    serialize(data: any): string {
+        return JSON.stringify(data);
+    }
+}
+
+@Role("User")
+@Entity()
+class UserModel {
     ...
 }
 ```

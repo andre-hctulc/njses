@@ -1,9 +1,10 @@
 import type { ModuleInit } from "./modules";
-import { ServiceCtr, App, Injectable, ServicePrototype, Instance } from "./service-registery";
+import { ComponentCtr, Injectable, ServicePrototype, Instance } from "./registery";
 import { ShadowInit as ShadowInit, Shadow, ParamShadow } from "./shadow";
 import type { OP } from "../utils/types";
 import { NJSESError } from "./errors";
 import { FIELD_NAME, ROLE_NAME } from "./system";
+import { App } from "./app";
 
 // --- Registery ---
 
@@ -11,8 +12,9 @@ import { FIELD_NAME, ROLE_NAME } from "./system";
  * @class_decorator
  */
 export function Service(init: Omit<ShadowInit, "dynamic">) {
-    return function (service: ServiceCtr) {
+    return function (service: ComponentCtr) {
         Shadow.create(service, { ...init, dynamic: false });
+        App.registery.register(service);
     };
 }
 
@@ -20,8 +22,9 @@ export function Service(init: Omit<ShadowInit, "dynamic">) {
  * @class_decorator
  */
 export function Entity(init: Omit<ShadowInit, "dynamic">) {
-    return function (service: ServiceCtr) {
-        Shadow.create(service, { ...init, dynamic: true });
+    return function (entity: ComponentCtr) {
+        Shadow.create(entity, { ...init, dynamic: true });
+        App.registery.register(entity);
     };
 }
 
@@ -30,7 +33,7 @@ export function Entity(init: Omit<ShadowInit, "dynamic">) {
  * @class_decorator
  */
 export function Module(init: ModuleInit) {
-    return function (service: ServiceCtr) {
+    return function (service: ComponentCtr) {
         // register as service
         Service({ name: init.name })(service);
         const shadow = Shadow.require(service);
@@ -46,10 +49,22 @@ export function Module(init: ModuleInit) {
  * @class_decorator
  */
 export function Role(...roles: string[]) {
-    return function (target: ServiceCtr) {
+    return function (target: ComponentCtr) {
         const shadow = Shadow.require(target);
         if (shadow.isEntity) throw new NJSESError("Roles can only be assigned to services");
         shadow.addRoles(...roles);
+    };
+}
+
+/**
+ * Assigns a role to the decorated property or method.
+ * @method_decorator
+ * @prop_decorator
+ */
+export function FieldRole(fieldRole: string) {
+    return function (target: any, propertyKey: string, descriptor?: PropertyDescriptor) {
+        if (descriptor) Shadow.require(target).addMethod(fieldRole, propertyKey);
+        else Shadow.require(target).addProp(fieldRole, propertyKey);
     };
 }
 
@@ -61,8 +76,8 @@ export function Role(...roles: string[]) {
  * **For now these services cannot have parameters!**
  * @class_decorator
  */
-export function SideEffects(...effects: ServiceCtr[]) {
-    return function (target: ServiceCtr) {
+export function SideEffects(...effects: ComponentCtr[]) {
+    return function (target: ComponentCtr) {
         Shadow.require(target).addSideEffects(...effects);
     };
 }
@@ -71,7 +86,9 @@ export function SideEffects(...effects: ServiceCtr[]) {
  * @template D Dependant
  * @prop_decorator
  */
-export function Inject<S extends ServiceCtr, D extends Instance | null = null>(injectable: Injectable<S, D>) {
+export function Inject<S extends ComponentCtr, D extends Instance | null = null>(
+    injectable: Injectable<S, D>
+) {
     return function (target: ServicePrototype, propertyKey: string | symbol) {
         Shadow.require(target).addInjection(propertyKey, injectable);
     };
@@ -109,7 +126,7 @@ export function Destroy(target: ServicePrototype, propertyKey: string, descripto
     Shadow.require(target).addMethod(FIELD_NAME.DESTROY, propertyKey);
 }
 
-export type On = (service: ServiceCtr, eventType: string) => any;
+export type On = (service: ComponentCtr, eventType: string) => any;
 
 // --- Events ---
 
@@ -117,10 +134,10 @@ export type On = (service: ServiceCtr, eventType: string) => any;
  * The decorated method receives the event arguments as arguments.
  * @method_decorator
  */
-export function On(emitter: ServiceCtr, eventType: string) {
+export function On(emitter: ComponentCtr, eventType: string) {
     return function (target: ServicePrototype, propertyKey: string, descriptor: PropertyDescriptor) {
         Shadow.require(emitter).on(eventType, (...args: any[]) => {
-            App.invoke(target, propertyKey, args);
+            App.registery.invoke(target, propertyKey, args);
         });
     };
 }
@@ -185,8 +202,9 @@ export function Flush<I extends [...any], O extends [...any]>(
             // Use registered arg mappers
             else {
                 newArgs = args.map((arg, i) => {
-                    if (!paramsShadow[i]?.mapArg) return arg;
-                    return paramsShadow[i].mapArg(arg, paramsShadow[i]);
+                    const pShadow = paramsShadow[i];
+                    if (!pShadow?.mapArg) return arg;
+                    return pShadow.mapArg(arg, paramsShadow[i]);
                 }) as O;
             }
             return originalMethod.apply(this, newArgs);
@@ -366,7 +384,7 @@ export function StoreGetAll(target: ServicePrototype, propertyKey: string, descr
 /**
  * @class_decorator
  */
-export function Repo(target: ServiceCtr) {
+export function Repo(target: ComponentCtr) {
     Shadow.require(target).addRoles(ROLE_NAME.REPO);
 }
 

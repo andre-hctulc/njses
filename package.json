@@ -5,15 +5,15 @@
     "main": "index.ts",
     "scripts": {
         "build": "npm run tc && tsc",
-        "tc": "tsc --noEmit"
+        "tc": "tsc --noEmit",
+        "tc:watch": "tsc --noEmit --watch"
     },
     "author": "André Thomas",
     "license": "ISC",
+    "dependencies": {
+        "stable-hash": "^0.0.4"
+    },
     "devDependencies": {
         "@types/node": "^20.14.9"
-    },
-    "dependencies": {
-        "stable-hash": "^0.0.4",
-        "swr": "^2.2.5"
     }
 }
